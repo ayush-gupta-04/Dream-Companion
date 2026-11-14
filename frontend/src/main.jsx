@@ -1,10 +1,20 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App.jsx';
+import { ClerkProvider } from '@clerk/react';
+import App, { ConfigurationError } from './App.jsx';
+import './App.css';
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+const publishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+const root = ReactDOM.createRoot(document.getElementById('root'));
 
+if (!publishableKey) {
+  root.render(<ConfigurationError />);
+} else {
+  root.render(
+    <React.StrictMode>
+      <ClerkProvider publishableKey={publishableKey} afterSignOutUrl="/">
+        <App />
+      </ClerkProvider>
+    </React.StrictMode>
+  );
+}

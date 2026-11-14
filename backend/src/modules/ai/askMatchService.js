@@ -1,6 +1,6 @@
 import { analyzeOver, analyzePlayer, compareOvers } from '../analytics/matchAnalyticsService.js';
 import { searchMatchEvents } from '../timeline/eventSearchService.js';
-import { AiUnavailableError } from './openAiResponsesClient.js';
+import { AiUnavailableError } from './geminiClient.js';
 
 const ASK_EVENT_SEARCH_LIMIT = 25;
 
@@ -14,81 +14,58 @@ export class AskMatchValidationError extends Error {
 
 export function createAskMatchService({
   prisma,
-  aiClient,
+  narrate,
   tools = { analyzeOver, analyzePlayer, compareOvers, searchMatchEvents }
 }) {
   return {
-    async ask({ matchId, question }) {
-      if (!aiClient) throw new AiUnavailableError();
-
-      const players = await prisma.player.findMany({
-        where: { matchAppearances: { some: { matchId } } },
-        select: { id: true, displayName: true },
-        orderBy: { displayName: 'asc' }
-      });
-      const intent = await aiClient.resolveIntent({ question, players });
-
-      if (intent.intent === 'UNSUPPORTED') {
-        return {
-          intent: intent.intent,
-          answer: null,
-          facts: null,
-          limitations: [
-            'This question is not yet supported. Try asking about one over or one player.'
-          ]
-        };
-      }
-
+    async execute({ matchId, query, tool }) {
+      if (!narrate) throw new AiUnavailableError();
       let facts;
       let limitations = [];
-      if (intent.intent === 'OVER_ANALYSIS') {
-        if (!intent.inningsNumber || intent.overNumber === null) {
+      if (tool.tool === 'OVER_ANALYSIS') {
+        if (tool.overNumber !== null && !tool.inningsNumber) {
           throw new AskMatchValidationError(
             'Specify an innings and over number for over analysis.'
           );
         }
         facts = await tools.analyzeOver(prisma, {
           matchId,
-          inningsNumber: intent.inningsNumber,
-          overNumber: intent.overNumber
+          inningsNumber: tool.inningsNumber ?? null,
+          overNumber: tool.overNumber ?? null
         });
-      } else if (intent.intent === 'PLAYER_ANALYSIS') {
-        if (!intent.playerId)
+      } else if (tool.tool === 'PLAYER_ANALYSIS') {
+        if (!tool.playerId)
           throw new AskMatchValidationError('Specify a player for player analysis.');
-        facts = await tools.analyzePlayer(prisma, { matchId, playerId: intent.playerId });
-      } else if (intent.intent === 'OVER_COMPARISON') {
-        if (
-          !intent.inningsNumber ||
-          intent.comparisonOver1 === null ||
-          intent.comparisonOver2 === null
-        ) {
+        facts = await tools.analyzePlayer(prisma, { matchId, playerId: tool.playerId });
+      } else if (tool.tool === 'OVER_COMPARISON') {
+        if (!tool.inningsNumber || tool.comparisonOver1 === null || tool.comparisonOver2 === null) {
           throw new AskMatchValidationError(
             'Specify an innings and two over numbers for over comparison.'
           );
         }
-        if (intent.comparisonOver1 === intent.comparisonOver2) {
+        if (tool.comparisonOver1 === tool.comparisonOver2) {
           throw new AskMatchValidationError('Choose two different overs to compare.');
         }
         facts = await tools.compareOvers(prisma, {
           matchId,
-          inningsNumber: intent.inningsNumber,
-          over1: intent.comparisonOver1,
-          over2: intent.comparisonOver2
+          inningsNumber: tool.inningsNumber,
+          over1: tool.comparisonOver1,
+          over2: tool.comparisonOver2
         });
-      } else {
-        if ((intent.startSequence || intent.endSequence) && !intent.inningsNumber) {
+      } else if (tool.tool === 'EVENT_SEARCH') {
+        if ((tool.startSequence || tool.endSequence) && !tool.inningsNumber) {
           throw new AskMatchValidationError(
             'Specify an innings when searching by delivery sequence.'
           );
         }
         facts = await tools.searchMatchEvents(prisma, {
           matchId,
-          inningsNumber: intent.inningsNumber ?? undefined,
-          types: intent.eventTypes?.length ? intent.eventTypes : undefined,
-          playerId: intent.playerId ?? undefined,
-          startSequence: intent.startSequence ?? undefined,
-          endSequence: intent.endSequence ?? undefined,
-          minimumImportance: intent.minimumImportance ?? undefined,
+          inningsNumber: tool.inningsNumber ?? undefined,
+          types: tool.eventTypes?.length ? tool.eventTypes : undefined,
+          playerId: tool.playerId ?? undefined,
+          startSequence: tool.startSequence ?? undefined,
+          endSequence: tool.endSequence ?? undefined,
+          minimumImportance: tool.minimumImportance ?? undefined,
           limit: ASK_EVENT_SEARCH_LIMIT
         });
         if (facts.nextCursor) {
@@ -96,11 +73,13 @@ export function createAskMatchService({
             `Only the first ${ASK_EVENT_SEARCH_LIMIT} matching events were used for this answer. Use event search pagination for the remaining results.`
           ];
         }
+      } else {
+        throw new AskMatchValidationError('Unsupported analysis tool.');
       }
 
-      const narration = await aiClient.narrate({ question, facts });
+      const narration = await narrate({ query, facts });
       return {
-        intent: intent.intent,
+        tool: tool.tool,
         answer: { ...narration, factReferences: facts.references },
         facts,
         limitations

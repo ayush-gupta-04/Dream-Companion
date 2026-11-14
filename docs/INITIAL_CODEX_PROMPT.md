@@ -2,7 +2,7 @@
 
 You are working in the repository for **Live Cricket AI Copilot**. Before doing anything, read the root `AGENTS.md` and all files in `docs/`.
 
-The project has three MVP experiences: Ask the Match, Catch Me Up, and Smart Match Timeline. They must share one Match Intelligence Engine. The confirmed stack is React + JavaScript (JSX) on the frontend and Node.js + Express + JavaScript (ES modules) on the backend, with PostgreSQL + Prisma, Redis, Socket.IO, BullMQ, and the OpenAI API. Do not switch to Next.js, NestJS, or TypeScript. Do not create `.ts`, `.tsx`, or `tsconfig.json` files. Follow the architecture and product constraints in the docs.
+The project has three MVP experiences: Ask the Match, Catch Me Up, and Smart Match Timeline. They must share one Match Intelligence Engine. The confirmed stack is React + JavaScript (JSX) on the frontend and Node.js + Express + JavaScript (ES modules) on the backend, with PostgreSQL + Prisma, Redis, Socket.IO, BullMQ, and the Gemini API (Google AI Studio). Do not switch to Next.js, NestJS, or TypeScript. Do not create `.ts`, `.tsx`, or `tsconfig.json` files. Follow the architecture and product constraints in the docs.
 
 ## Your task in this first session
 

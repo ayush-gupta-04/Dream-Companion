@@ -7,15 +7,16 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test tests/**/*.test.js",
-    "test:db": "node --env-file=.env --test tests/**/*.test.js",
+    "test": "node --import ./tests/testSetup.js --test tests/**/*.test.js",
+    "test:db": "node --env-file=.env --import ./tests/testSetup.js --test tests/**/*.test.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "db:studio": "prisma studio",
-    "replay": "node src/replay/startReplay.js"
+    "db:studio": "prisma studio"
   },
   "dependencies": {
+    "@clerk/backend": "^3.29.0",
+    "@clerk/express": "^2.1.90",
     "@prisma/client": "^6.5.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",

@@ -35,4 +35,17 @@ export class MatchStateCache {
       );
     }
   }
+
+  async clear(matchId) {
+    try {
+      if (!this.redisClient) return;
+      if (matchId && typeof this.redisClient.del === 'function') {
+        await this.redisClient.del(stateKey(matchId));
+      } else if (typeof this.redisClient.flushDb === 'function') {
+        await this.redisClient.flushDb();
+      }
+    } catch (error) {
+      console.warn('[MatchStateCache] Redis clear failed:', error.message);
+    }
+  }
 }

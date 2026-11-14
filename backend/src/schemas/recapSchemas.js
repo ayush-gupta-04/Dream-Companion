@@ -14,12 +14,6 @@ export const sessionRequestSchema = z.object({
   sessionId: z.string().uuid()
 });
 
-export const recapRequestSchema = z.object({
-  query: z.string().trim().min(3).max(500),
-  detail: z.enum(['QUICK', 'DETAILED']).default('QUICK'),
-  sessionId: z.string().uuid().optional()
-});
-
 /**
  * The model may choose only a tool from this allow-list. The service validates
  * this parsed shape again before it resolves a delivery window.

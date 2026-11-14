@@ -35,13 +35,17 @@ function normalizeWickets(wickets, registry) {
     playerOutSourceId: sourcePersonId(registry, wicket.player_out),
     kind: wicket.kind,
     countsAsWicket: wicket.kind !== 'retired hurt',
-    fielders: (wicket.fielders ?? []).map((fielder) =>
-      sourcePersonId(registry, typeof fielder === 'string' ? fielder : fielder.name)
-    )
+    // Cricsheet can mark a substitute fielder without identifying the person.
+    // A fielder's identity is optional metadata and never changes the score or
+    // dismissal itself, so retain only fielders with a stable provider ID.
+    fielders: (wicket.fielders ?? []).flatMap((fielder) => {
+      const name = typeof fielder === 'string' ? fielder : fielder?.name;
+      return name ? [sourcePersonId(registry, name)] : [];
+    })
   }));
 }
 
-// This function takes that raw data and converts it into a clean, standardized, 
+// This function takes that raw data and converts it into a clean, standardized,
 //    internal format that our database and cricket engine can easily use.
 
 export function adaptCricsheetMatch(rawMatch, sourceMatchId) {

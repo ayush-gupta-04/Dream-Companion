@@ -4,10 +4,21 @@ export function matchRoom(matchId) {
   return `match:${matchId}`;
 }
 
-export function createSocketServer(httpServer, frontendUrl) {
+export function createSocketServer(httpServer, frontendUrl, { authenticate } = {}) {
   const io = new Server(httpServer, {
     cors: { origin: frontendUrl, credentials: true }
   });
+
+  if (authenticate) {
+    io.use(async (socket, next) => {
+      try {
+        socket.data.viewer = await authenticate(socket.handshake.auth?.token);
+        next();
+      } catch {
+        next(new Error('Authentication is required.'));
+      }
+    });
+  }
 
   io.on('connection', (socket) => {
     socket.on('join_match', (matchId, acknowledge = () => {}) => {

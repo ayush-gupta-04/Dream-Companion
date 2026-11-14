@@ -21,7 +21,7 @@ Treat these files as the project source of truth. When changing a material produ
 - Cache and fast live state: Redis.
 - Real-time transport: Socket.IO.
 - Background jobs: BullMQ using Redis.
-- AI: OpenAI API, called from the backend through a controlled AI orchestration layer.
+- AI: Gemini API (Google AI Studio), called from the backend through a controlled AI orchestration layer.
 - Local development: Docker Compose for infrastructure where practical.
 
 Do not silently replace these choices. Suggest a change with trade-offs before implementing it.
@@ -58,4 +58,4 @@ A task is complete when its acceptance criteria are met, relevant tests/checks h
 
 ## Current implementation status
 
-Phase 1 repository foundation is complete. Phase 2 domain/persistence work may be present, but always inspect the actual repository and verification results before extending it. Cricsheet is the selected future MVP replay source; video seeking is excluded from scope; a production deployment target and OpenAI configuration remain unselected.
+Phase 1 through Phase 7 frontend feature integration are complete. The React client provides a public landing page, Clerk-authenticated match directory, match workspace with compact factual state, video companion shell (no seeking/playback), scrollable Smart Match Timeline with Socket.IO realtime updates and provider-correction reconciliation, and the unified companion chat interface (Ask the Match and Catch Me Up) with canonical prompts, free-text queries, and grounded structured answers. On backend startup, local Cricsheet matches are persisted as historical data except `1001349.json`, which is the one user-triggered simulated-live replay; no admin replay controls exist. Gemini API (Google AI Studio) is the LLM provider; production hardening and deployment (Phase 8) remain.

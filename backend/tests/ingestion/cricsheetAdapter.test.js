@@ -38,7 +38,13 @@ const syntheticCricsheetMatch = {
               batter: 'A Batter',
               non_striker: 'A Partner',
               bowler: 'B Bowler',
-              wickets: [{ kind: 'caught', player_out: 'A Batter' }],
+              wickets: [
+                {
+                  kind: 'caught',
+                  player_out: 'A Batter',
+                  fielders: [{ substitute: true }]
+                }
+              ],
               runs: { batter: 0, extras: 0, total: 0 }
             }
           ]
@@ -61,4 +67,5 @@ test('adapts Cricsheet deliveries using array position instead of repeated label
   assert.notEqual(first.sourceDeliveryId, second.sourceDeliveryId);
   assert.equal(first.extras.wides, 1);
   assert.equal(second.wickets[0].playerOutSourceId, 'aaaa0001');
+  assert.deepEqual(second.wickets[0].fielders, []);
 });

@@ -1,13 +1,14 @@
 import { createServer } from 'node:http';
-import path from 'node:path';
 import { createClient } from 'redis';
 import { createApp } from './app.js';
 import { config } from './config/index.js';
 import { prisma } from './db/prisma.js';
 import { MatchStateCache } from './modules/match-intelligence/state/matchStateCache.js';
 import { createTimelineService } from './modules/timeline/timelineService.js';
-import { replayCricsheetFile } from './replay/replayService.js';
+import { bootstrapHistoricalArchive } from './replay/historicalArchiveService.js';
+import { LiveReplayManager } from './replay/liveReplayManager.js';
 import { createSocketServer } from './sockets/socketServer.js';
+import { createClerkAuth } from './auth/clerkAuth.js';
 
 const redisClient = createClient({
   url: config.redis.url,
@@ -20,34 +21,48 @@ await redisClient
 
 const stateCache = new MatchStateCache(redisClient);
 const timelineService = createTimelineService({ prisma });
-const app = createApp({ stateCache, timelineService });
+const liveReplayManager = new LiveReplayManager({
+  prisma,
+  stateCache,
+  io: null,
+  timelineService,
+  liveSourceMatchId: config.replay.liveFileName.replace(/\.json$/i, ''),
+  defaultIntervalMs: config.replay.deliveryIntervalMs
+});
+
+const archive = await bootstrapHistoricalArchive({
+  prisma,
+  stateCache,
+  timelineService,
+  dataDirectory: config.replay.dataDirectory,
+  liveFileName: config.replay.liveFileName
+});
+liveReplayManager.registerLiveMatch({
+  matchId: archive.liveMatchId,
+  liveFilePath: archive.liveFilePath
+});
+console.log(
+  `[Archive] Ready: ${archive.historicalMatchesSeeded} seeded, ${archive.historicalMatchesSkipped} unchanged, 1 live simulation.`
+);
+
+const auth = createClerkAuth({ clerk: config.clerk, nodeEnv: config.nodeEnv });
+const app = createApp({ stateCache, timelineService, liveReplayManager, auth });
 const server = createServer(app);
-const io = createSocketServer(server, config.frontendUrl);
+const io = createSocketServer(server, config.frontendUrl, {
+  authenticate: auth.authenticateSocket
+});
+liveReplayManager.io = io;
 
 server.listen(config.port, () => {
   console.log(`[API Server] Running on http://localhost:${config.port} (env: ${config.nodeEnv})`);
   console.log(`[API Server] Health check available at http://localhost:${config.port}/health`);
+  console.log('[Live replay] Ready when a fan opens the designated live match.');
 });
-
-if (config.replay.filePath) {
-  const sourceMatchId = path.basename(config.replay.filePath, path.extname(config.replay.filePath));
-  replayCricsheetFile({
-    filePath: config.replay.filePath,
-    sourceMatchId,
-    intervalMs: config.replay.deliveryIntervalMs,
-    prisma,
-    stateCache,
-    io,
-    timelineService
-  }).catch((error) => {
-    console.error('[Replay] Failed:', error);
-    process.exitCode = 1;
-  });
-}
 
 // Graceful shutdown handling
 const shutdown = () => {
   console.log('\n[API Server] Shutting down gracefully...');
+  liveReplayManager.stop();
   io.close();
   server.close(async () => {
     if (redisClient.isOpen) await redisClient.quit();

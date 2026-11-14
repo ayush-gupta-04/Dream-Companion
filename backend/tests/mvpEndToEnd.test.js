@@ -3,6 +3,7 @@ import { describe, test } from 'node:test';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { createAskMatchService } from '../src/modules/ai/askMatchService.js';
+import { createMatchQueryService } from '../src/modules/ai/matchQueryService.js';
 import { createRecapService } from '../src/modules/summaries/recapService.js';
 import { createTimelineService } from '../src/modules/timeline/timelineService.js';
 import { createEventSearchService } from '../src/modules/timeline/eventSearchService.js';
@@ -279,104 +280,61 @@ describe('MVP End-to-End System Tests', () => {
     }
   };
 
-  const mockAskAi = {
-    async resolveIntent({ question }) {
-      if (question.toLowerCase().includes('compare')) {
-        return {
-          intent: 'OVER_COMPARISON',
+  function toolSelection(tool, overrides = {}) {
+    return {
+      tool,
+      inningsNumber: null,
+      overNumber: null,
+      comparisonOver1: null,
+      comparisonOver2: null,
+      playerId: null,
+      eventTypes: null,
+      minimumImportance: null,
+      startSequence: null,
+      endSequence: null,
+      minutes: null,
+      overs: null,
+      ...overrides
+    };
+  }
+
+  const mockQueryAi = {
+    async selectTool({ query }) {
+      if (query.toLowerCase().includes('compare')) {
+        return toolSelection('OVER_COMPARISON', {
           inningsNumber: 1,
-          overNumber: null,
           comparisonOver1: 0,
-          comparisonOver2: 1,
-          playerId: null,
-          eventTypes: null,
-          minimumImportance: null,
-          startSequence: null,
-          endSequence: null
-        };
+          comparisonOver2: 1
+        });
       }
-      if (question.toLowerCase().includes('kohli') || question.toLowerCase().includes('player')) {
-        return {
-          intent: 'PLAYER_ANALYSIS',
-          inningsNumber: 1,
-          overNumber: null,
-          comparisonOver1: null,
-          comparisonOver2: null,
-          playerId,
-          eventTypes: null,
-          minimumImportance: null,
-          startSequence: null,
-          endSequence: null
-        };
+      if (query.toLowerCase().includes('kohli') || query.toLowerCase().includes('player')) {
+        return toolSelection('PLAYER_ANALYSIS', { playerId });
       }
-      if (question.toLowerCase().includes('wicket') || question.toLowerCase().includes('event')) {
-        return {
-          intent: 'EVENT_SEARCH',
+      if (query.toLowerCase().includes('wicket') || query.toLowerCase().includes('event')) {
+        return toolSelection('EVENT_SEARCH', {
           inningsNumber: 1,
-          overNumber: null,
-          comparisonOver1: null,
-          comparisonOver2: null,
-          playerId: null,
           eventTypes: ['WICKET'],
-          minimumImportance: 'MAJOR',
-          startSequence: null,
-          endSequence: null
-        };
+          minimumImportance: 'MAJOR'
+        });
       }
-      if (question.toLowerCase().includes('unsupported')) {
-        return {
-          intent: 'UNSUPPORTED',
-          inningsNumber: null,
-          overNumber: null,
-          comparisonOver1: null,
-          comparisonOver2: null,
-          playerId: null,
-          eventTypes: null,
-          minimumImportance: null,
-          startSequence: null,
-          endSequence: null
-        };
+      if (query === 'Summarize this over') return toolSelection('LAST_OVER');
+      if (query.includes('last 2 overs') || query.includes('2 overs')) {
+        return toolSelection('LAST_N_OVERS', { overs: 2 });
       }
-      return {
-        intent: 'OVER_ANALYSIS',
-        inningsNumber: 1,
-        overNumber: 0,
-        comparisonOver1: null,
-        comparisonOver2: null,
-        playerId: null,
-        eventTypes: null,
-        minimumImportance: null,
-        startSequence: null,
-        endSequence: null
-      };
+      if (query === 'What did I miss?') return toolSelection('SINCE_SESSION_JOIN');
+      if (query.toLowerCase().includes('unsupported')) return toolSelection('UNSUPPORTED');
+      if (query.toLowerCase().includes('summarize')) return toolSelection('WHOLE_MATCH');
+      return toolSelection('OVER_ANALYSIS', { inningsNumber: 1, overNumber: 0 });
     },
-    async narrate({ question, facts }) {
+    async narrateAnalysis({ query, facts }) {
       return {
         headline: 'Factual match narrative',
-        analysis: `Grounded answer for "${question}" using ${facts.type ?? 'match data'}.`
+        analysis: `Grounded answer for "${query}" using ${facts.type ?? 'match data'}.`
       };
-    }
-  };
-
-  const mockRecapAi = {
-    async resolveIntent({ query }) {
-      if (query === 'Summarize this over') {
-        return { tool: 'LAST_OVER', minutes: null, overs: null };
-      }
-      if (query.includes('last 2 overs') || query.includes('2 overs')) {
-        return { tool: 'LAST_N_OVERS', minutes: null, overs: 2 };
-      }
-      if (query === 'What did I miss?') {
-        return { tool: 'SINCE_SESSION_JOIN', minutes: null, overs: null };
-      }
-      if (query.toLowerCase().includes('unsupported')) {
-        return { tool: 'UNSUPPORTED', minutes: null, overs: null };
-      }
-      return { tool: 'WHOLE_MATCH', minutes: null, overs: null };
     },
-    async narrate({ detail, evidence }) {
+    async narrateRecap({ evidence }) {
       return {
-        headline: `Recap (${detail}) for match`,
+        headline: 'Quick recap',
         summary: `The selected window had ${evidence.totals.runs} runs and ${evidence.totals.wickets} wickets.`,
         bullets: ['Key boundary scored', 'Key dismissal recorded']
       };
@@ -389,11 +347,25 @@ describe('MVP End-to-End System Tests', () => {
     del: async () => {}
   });
 
+  const analysisService = createAskMatchService({
+    prisma: mockPrisma,
+    narrate: mockQueryAi.narrateAnalysis
+  });
+  const recapService = createRecapService({
+    prisma: mockPrisma,
+    narrate: mockQueryAi.narrateRecap
+  });
+  const matchQueryService = createMatchQueryService({
+    prisma: mockPrisma,
+    aiClient: mockQueryAi,
+    analysisService,
+    recapService
+  });
   const app = createApp({
     stateCache,
     prismaClient: mockPrisma,
-    askMatchService: createAskMatchService({ prisma: mockPrisma, aiClient: mockAskAi }),
-    recapService: createRecapService({ prisma: mockPrisma, aiClient: mockRecapAi }),
+    recapService,
+    matchQueryService,
     timelineService: createTimelineService({ prisma: mockPrisma }),
     eventSearchService: createEventSearchService({ prisma: mockPrisma })
   });
@@ -452,54 +424,55 @@ describe('MVP End-to-End System Tests', () => {
     });
   });
 
-  describe('MVP Feature 2: Catch Me Up (Summaries & Session Markers)', () => {
-    test('POST /api/matches/:id/sessions/join creates an anonymous viewer session', async () => {
+  describe('MVP Feature 2: Catch Me Up through the shared query endpoint', () => {
+    test('POST /api/matches/:id/sessions/join creates an authenticated viewer session', async () => {
       const res = await request(app).post(`/api/matches/${matchId}/sessions/join`);
       assert.equal(res.status, 201);
       assert.equal(res.body.session.id, mockSession.id);
       assert.deepEqual(res.body.session.marker, { inningsNumber: 1, deliverySequence: 2 });
     });
 
-    test('POST /api/matches/:id/summaries returns WHOLE_MATCH recap with evidence totals', async () => {
+    test('returns a WHOLE_MATCH recap with evidence totals', async () => {
       const res = await request(app)
-        .post(`/api/matches/${matchId}/summaries`)
-        .send({ query: 'Summarize the whole match', detail: 'QUICK' });
+        .post(`/api/matches/${matchId}/query`)
+        .send({ query: 'Summarize the whole match' });
       assert.equal(res.status, 200);
-      assert.equal(res.body.intent, 'WHOLE_MATCH');
+      assert.equal(res.body.kind, 'RECAP');
+      assert.equal(res.body.tool, 'WHOLE_MATCH');
       assert.equal(res.body.window.type, 'WHOLE_MATCH');
-      assert.equal(res.body.recap.headline, 'Recap (QUICK) for match');
+      assert.equal(res.body.answer.headline, 'Quick recap');
       assert.equal(res.body.evidence.totals.runs, 10);
       assert.equal(res.body.evidence.totals.wickets, 1);
-      assert.equal(res.body.recap.factReferences.length, 3);
+      assert.equal(res.body.references.length, 3);
     });
 
-    test('POST /api/matches/:id/summaries returns LAST_OVER recap bounded to completed over', async () => {
+    test('returns LAST_OVER bounded to a completed over', async () => {
       const res = await request(app)
-        .post(`/api/matches/${matchId}/summaries`)
-        .send({ query: 'Summarize this over', detail: 'QUICK' });
+        .post(`/api/matches/${matchId}/query`)
+        .send({ query: 'Summarize this over' });
       assert.equal(res.status, 200);
-      assert.equal(res.body.intent, 'LAST_OVER');
+      assert.equal(res.body.tool, 'LAST_OVER');
       assert.equal(res.body.window.type, 'LAST_OVER');
       assert.equal(res.body.window.anchor.display.overNumber, 0);
     });
 
-    test('POST /api/matches/:id/summaries returns LAST_N_OVERS recap bounded to requested completed overs', async () => {
+    test('returns LAST_N_OVERS bounded to requested completed overs', async () => {
       const res = await request(app)
-        .post(`/api/matches/${matchId}/summaries`)
-        .send({ query: 'Summarize the last 2 overs', detail: 'QUICK' });
+        .post(`/api/matches/${matchId}/query`)
+        .send({ query: 'Summarize the last 2 overs' });
       assert.equal(res.status, 200);
-      assert.equal(res.body.intent, 'LAST_N_OVERS');
+      assert.equal(res.body.tool, 'LAST_N_OVERS');
       assert.equal(res.body.window.type, 'LAST_N_OVERS');
       assert.ok(res.body.window.overRange);
       assert.equal(res.body.window.overRange.requestedOvers, 2);
     });
 
-    test('POST /api/matches/:id/summaries returns SINCE_SESSION_JOIN scoped recap', async () => {
+    test('returns a SINCE_SESSION_JOIN scoped recap', async () => {
       const res = await request(app)
-        .post(`/api/matches/${matchId}/summaries`)
-        .send({ query: 'What did I miss?', sessionId: mockSession.id, detail: 'QUICK' });
+        .post(`/api/matches/${matchId}/query`)
+        .send({ query: 'What did I miss?', sessionId: mockSession.id });
       assert.equal(res.status, 200);
-      assert.equal(res.body.intent, 'SINCE_SESSION_JOIN');
+      assert.equal(res.body.tool, 'SINCE_SESSION_JOIN');
       assert.equal(res.body.window.type, 'SINCE_SESSION_JOIN');
       assert.deepEqual(res.body.window.anchor, {
         inningsNumber: 1,
@@ -508,27 +481,25 @@ describe('MVP End-to-End System Tests', () => {
       });
     });
 
-    test('POST /api/matches/:id/summaries returns limitations for unsupported recap requests', async () => {
+    test('returns limitations for unsupported requests without running a domain tool', async () => {
       const res = await request(app)
-        .post(`/api/matches/${matchId}/summaries`)
-        .send({ query: 'Tell me an unsupported joke', detail: 'QUICK' });
+        .post(`/api/matches/${matchId}/query`)
+        .send({ query: 'Tell me an unsupported joke' });
       assert.equal(res.status, 200);
-      assert.equal(res.body.intent, 'UNSUPPORTED');
-      assert.equal(res.body.recap, null);
+      assert.equal(res.body.kind, 'UNSUPPORTED');
+      assert.equal(res.body.answer, null);
       assert.ok(res.body.limitations.length > 0);
     });
 
-    test('POST /api/matches/:id/summaries rejects query that is too short with HTTP 400', async () => {
-      const res = await request(app)
-        .post(`/api/matches/${matchId}/summaries`)
-        .send({ query: 'hi' });
+    test('rejects a too-short query with HTTP 400', async () => {
+      const res = await request(app).post(`/api/matches/${matchId}/query`).send({ query: 'hi' });
       assert.equal(res.status, 400);
-      assert.equal(res.body.message, 'Invalid Catch Me Up request.');
+      assert.equal(res.body.message, 'Invalid match query request.');
     });
 
-    test('POST /api/matches/:id/summaries returns 422 when asking for session recap without session', async () => {
+    test('returns 422 when asking for a session recap without a session', async () => {
       const res = await request(app)
-        .post(`/api/matches/${matchId}/summaries`)
+        .post(`/api/matches/${matchId}/query`)
         .send({ query: 'What did I miss?' });
       assert.equal(res.status, 422);
       assert.equal(res.body.message, 'Join the match before asking what you missed.');
@@ -550,77 +521,74 @@ describe('MVP End-to-End System Tests', () => {
     });
   });
 
-  describe('MVP Feature 3: Ask the Match (Grounded AI Answers)', () => {
-    test('POST /api/matches/:id/ask answers over analysis queries grounded in factual data', async () => {
+  describe('MVP Feature 3: Ask the Match through the shared query endpoint', () => {
+    test('answers over analysis queries grounded in factual data', async () => {
       const res = await request(app)
-        .post(`/api/matches/${matchId}/ask`)
-        .send({ question: 'Analyse the first over' });
+        .post(`/api/matches/${matchId}/query`)
+        .send({ query: 'Analyse the first over' });
       assert.equal(res.status, 200);
-      assert.equal(res.body.intent, 'OVER_ANALYSIS');
-      assert.equal(res.body.facts.runs, 4);
-      assert.equal(res.body.facts.wickets, 1);
-      assert.equal(res.body.answer.factReferences.length, 2);
+      assert.equal(res.body.kind, 'ANALYSIS');
+      assert.equal(res.body.tool, 'OVER_ANALYSIS');
+      assert.equal(res.body.evidence.runs, 4);
+      assert.equal(res.body.evidence.wickets, 1);
+      assert.equal(res.body.references.length, 2);
       assert.equal(res.body.answer.headline, 'Factual match narrative');
     });
 
-    test('POST /api/matches/:id/ask answers player analysis queries with batting & bowling facts', async () => {
+    test('answers player analysis queries with batting and bowling facts', async () => {
       const res = await request(app)
-        .post(`/api/matches/${matchId}/ask`)
-        .send({ question: 'How did Kohli play today?' });
+        .post(`/api/matches/${matchId}/query`)
+        .send({ query: 'How did Kohli play today?' });
       assert.equal(res.status, 200);
-      assert.equal(res.body.intent, 'PLAYER_ANALYSIS');
-      assert.equal(res.body.facts.player.displayName, 'V Kohli');
-      assert.equal(res.body.facts.batting.runs, 4);
-      assert.equal(res.body.facts.batting.ballsFaced, 2);
+      assert.equal(res.body.tool, 'PLAYER_ANALYSIS');
+      assert.equal(res.body.evidence.player.displayName, 'V Kohli');
+      assert.equal(res.body.evidence.batting.runs, 4);
+      assert.equal(res.body.evidence.batting.ballsFaced, 2);
     });
 
-    test('POST /api/matches/:id/ask answers event search queries using verified timeline moments', async () => {
+    test('answers event-search queries using verified timeline moments', async () => {
       const res = await request(app)
-        .post(`/api/matches/${matchId}/ask`)
-        .send({ question: 'Show me the wickets in this match' });
+        .post(`/api/matches/${matchId}/query`)
+        .send({ query: 'Show me the wickets in this match' });
       assert.equal(res.status, 200);
-      assert.equal(res.body.intent, 'EVENT_SEARCH');
-      assert.equal(res.body.facts.events.length > 0, true);
+      assert.equal(res.body.tool, 'EVENT_SEARCH');
+      assert.equal(res.body.evidence.events.length > 0, true);
     });
 
-    test('POST /api/matches/:id/ask answers over comparison queries with directional factual deltas', async () => {
+    test('answers over comparisons with directional factual deltas', async () => {
       const res = await request(app)
-        .post(`/api/matches/${matchId}/ask`)
-        .send({ question: 'Compare over 1 and over 2' });
+        .post(`/api/matches/${matchId}/query`)
+        .send({ query: 'Compare over 1 and over 2' });
       assert.equal(res.status, 200);
-      assert.equal(res.body.intent, 'OVER_COMPARISON');
-      assert.equal(res.body.facts.type, 'OVER_COMPARISON');
-      assert.ok(res.body.facts.deltas);
-      assert.equal(typeof res.body.facts.deltas.runs, 'number');
-      assert.ok(res.body.answer.factReferences.length > 0);
+      assert.equal(res.body.tool, 'OVER_COMPARISON');
+      assert.equal(res.body.evidence.type, 'OVER_COMPARISON');
+      assert.ok(res.body.evidence.deltas);
+      assert.equal(typeof res.body.evidence.deltas.runs, 'number');
+      assert.ok(res.body.references.length > 0);
     });
 
-    test('POST /api/matches/:id/ask rejects missing or too short questions with HTTP 400', async () => {
+    test('rejects a retired detail option with HTTP 400', async () => {
       const res = await request(app)
-        .post(`/api/matches/${matchId}/ask`)
-        .send({ question: 'hi' });
+        .post(`/api/matches/${matchId}/query`)
+        .send({ query: 'Summarize the match', detail: 'QUICK' });
       assert.equal(res.status, 400);
-      assert.equal(res.body.message, 'Invalid Ask the Match request.');
+      assert.equal(res.body.message, 'Invalid match query request.');
     });
 
-    test('POST /api/matches/:id/ask handles unsupported queries without calling tools', async () => {
-      const res = await request(app)
-        .post(`/api/matches/${matchId}/ask`)
-        .send({ question: 'What is the weather like tomorrow in London? (unsupported)' });
-      assert.equal(res.status, 200);
-      assert.equal(res.body.intent, 'UNSUPPORTED');
-      assert.equal(res.body.facts, null);
-    });
-
-    test('POST /api/matches/:id/ask returns 503 when AI is not configured', async () => {
+    test('returns 503 when AI is not configured', async () => {
       const unconfiguredApp = createApp({
         stateCache,
         prismaClient: mockPrisma,
-        askMatchService: createAskMatchService({ prisma: mockPrisma, aiClient: null })
+        matchQueryService: createMatchQueryService({
+          prisma: mockPrisma,
+          aiClient: null,
+          analysisService,
+          recapService
+        })
       });
       const res = await request(unconfiguredApp)
-        .post(`/api/matches/${matchId}/ask`)
-        .send({ question: 'Analyse the first over' });
+        .post(`/api/matches/${matchId}/query`)
+        .send({ query: 'Analyse the first over' });
       assert.equal(res.status, 503);
       assert.equal(res.body.message, 'AI features are not configured.');
     });
@@ -685,84 +653,258 @@ describe('MVP End-to-End System Tests', () => {
     'Live PostgreSQL Database End-to-End Verification',
     { skip: process.env.RUN_DATABASE_TESTS !== 'true' },
     () => {
-      test('queries real Cricsheet match data through all MVP endpoints', async () => {
+      test('queries real match data and verifies all MVP endpoints with PostgreSQL and Redis', async () => {
         const { prisma } = await import('../src/db/prisma.js');
-        const dbMatch = await prisma.match.findFirst({
-          where: { sourceMatchId: '1001349' },
-          include: { players: { include: { player: true }, take: 1 } }
-        });
+        const { createClient } = await import('redis');
+        const { createDelivery } =
+          await import('../src/modules/match-intelligence/persistence/deliveryRepository.js');
+        const { normalizedDelivery } = await import('./fixtures/normalizedDeliveries.js');
 
-        if (!dbMatch) return;
-
-        const liveApp = createApp({
-          stateCache,
-          prismaClient: prisma,
-          askMatchService: createAskMatchService({ prisma, aiClient: mockAskAi }),
-          recapService: createRecapService({ prisma, aiClient: mockRecapAi }),
-          timelineService: createTimelineService({ prisma }),
-          eventSearchService: createEventSearchService({ prisma })
-        });
-
-        // 1. State
-        const stateRes = await request(liveApp).get(`/api/matches/${dbMatch.id}/state`);
-        assert.equal(stateRes.status, 200);
-        assert.equal(stateRes.body.state.innings.length, 2);
-
-        // 2. Timeline
-        const timelineRes = await request(liveApp).get(
-          `/api/matches/${dbMatch.id}/timeline?limit=5`
-        );
-        assert.equal(timelineRes.status, 200);
-        assert.equal(timelineRes.body.events.length, 5);
-
-        // 3. Catch Me Up (Whole Match and Last N Overs)
-        const recapRes = await request(liveApp)
-          .post(`/api/matches/${dbMatch.id}/summaries`)
-          .send({ query: 'Summarize the whole match', detail: 'QUICK' });
-        assert.equal(recapRes.status, 200);
-        assert.equal(recapRes.body.evidence.totals.runs > 0, true);
-
-        const recapLastNOvers = await request(liveApp)
-          .post(`/api/matches/${dbMatch.id}/summaries`)
-          .send({ query: 'Summarize the last 2 overs', detail: 'QUICK' });
-        assert.equal(recapLastNOvers.status, 200);
-        assert.equal(recapLastNOvers.body.intent, 'LAST_N_OVERS');
-        assert.equal(recapLastNOvers.body.window.overRange.requestedOvers, 2);
-
-        // 4. Ask the Match
-        const askRes = await request(liveApp)
-          .post(`/api/matches/${dbMatch.id}/ask`)
-          .send({ question: 'Analyse the first over' });
-        assert.equal(askRes.status, 200);
-        assert.equal(askRes.body.intent, 'OVER_ANALYSIS');
-
-        // 5. Over Comparison
-        const compareRes = await request(liveApp).get(
-          `/api/matches/${dbMatch.id}/analytics/overs/compare?innings=1&over1=0&over2=1`
-        );
-        assert.equal(compareRes.status, 200);
-        assert.equal(compareRes.body.analysis.type, 'OVER_COMPARISON');
-        assert.ok(compareRes.body.analysis.deltas);
-
-        // 6. Event Search
-        const searchRes = await request(liveApp).get(
-          `/api/matches/${dbMatch.id}/events/search?types=FOUR,SIX&minimumImportance=HIGHLIGHT`
-        );
-        assert.equal(searchRes.status, 200);
-        assert.equal(searchRes.body.type, 'EVENT_SEARCH');
-        assert.ok(Array.isArray(searchRes.body.events));
-
-        // 7. Player Analytics
-        if (dbMatch.players?.[0]?.player?.id) {
-          const playerId = dbMatch.players[0].player.id;
-          const playerRes = await request(liveApp).get(
-            `/api/matches/${dbMatch.id}/analytics/players/${playerId}`
-          );
-          assert.equal(playerRes.status, 200);
-          assert.equal(playerRes.body.analysis.type, 'PLAYER_ANALYSIS');
+        // Connect to live Redis
+        let redisClient = null;
+        let liveStateCache = stateCache;
+        try {
+          redisClient = createClient({
+            url: process.env.REDIS_URL || 'redis://localhost:6379',
+            socket: { reconnectStrategy: false }
+          });
+          await redisClient.connect();
+          liveStateCache = new MatchStateCache(redisClient);
+        } catch {
+          // Redis unavailable, keep fallback cache
         }
 
-        await prisma.$disconnect();
+        // The configured live source intentionally starts without deliveries,
+        // so this verification always creates its own complete match fixture.
+        let dbMatch = null;
+        let createdMatchId = null;
+
+        if (dbMatch === null) {
+          // Seed a complete test match with 2 completed overs into PostgreSQL
+          const suffix = `${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
+          const seededMatch = await prisma.match.create({
+            data: {
+              name: `Live Integration Match ${suffix}`,
+              status: 'COMPLETE',
+              ballsPerOver: 6
+            }
+          });
+          createdMatchId = seededMatch.id;
+
+          const [teamA, teamB] = await Promise.all([
+            prisma.team.create({ data: { name: `Team A ${suffix}` } }),
+            prisma.team.create({ data: { name: `Team B ${suffix}` } })
+          ]);
+
+          const [batter, nonStriker, bowler] = await Promise.all([
+            prisma.player.create({ data: { displayName: `Batter A ${suffix}` } }),
+            prisma.player.create({ data: { displayName: `Batter B ${suffix}` } }),
+            prisma.player.create({ data: { displayName: `Bowler A ${suffix}` } })
+          ]);
+
+          await Promise.all([
+            prisma.matchPlayer.create({
+              data: { matchId: seededMatch.id, playerId: batter.id, teamId: teamA.id }
+            }),
+            prisma.matchPlayer.create({
+              data: { matchId: seededMatch.id, playerId: nonStriker.id, teamId: teamA.id }
+            }),
+            prisma.matchPlayer.create({
+              data: { matchId: seededMatch.id, playerId: bowler.id, teamId: teamB.id }
+            })
+          ]);
+
+          const innings = await prisma.innings.create({
+            data: { matchId: seededMatch.id, inningsNumber: 1, battingTeamId: teamA.id }
+          });
+
+          // Over 0 (0.1 - 0.6): 1, 0, 4 (FOUR), 1, 0, 0 -> 6 runs, 1 boundary
+          const over0Deliveries = [
+            { ballLabel: '0.1', runs: 1 },
+            { ballLabel: '0.2', runs: 0 },
+            { ballLabel: '0.3', runs: 4 },
+            { ballLabel: '0.4', runs: 1 },
+            { ballLabel: '0.5', runs: 0 },
+            { ballLabel: '0.6', runs: 0 }
+          ];
+
+          for (let i = 0; i < over0Deliveries.length; i++) {
+            await createDelivery(prisma, {
+              inningsId: innings.id,
+              delivery: normalizedDelivery({
+                deliverySequence: i + 1,
+                display: { overNumber: 0, ballLabel: over0Deliveries[i].ballLabel },
+                players: {
+                  batterId: batter.id,
+                  nonStrikerId: nonStriker.id,
+                  bowlerId: bowler.id
+                },
+                runs: { batter: over0Deliveries[i].runs, total: over0Deliveries[i].runs }
+              })
+            });
+          }
+
+          // Over 1 (1.1 - 1.6): 6 (SIX), 1, 0, Wicket, 2, 1 -> 10 runs, 1 six, 1 wicket
+          const over1Deliveries = [
+            { ballLabel: '1.1', runs: 6, wickets: [] },
+            { ballLabel: '1.2', runs: 1, wickets: [] },
+            { ballLabel: '1.3', runs: 0, wickets: [] },
+            {
+              ballLabel: '1.4',
+              runs: 0,
+              wickets: [{ playerOutId: batter.id, kind: 'bowled', countsAsWicket: true }]
+            },
+            { ballLabel: '1.5', runs: 2, wickets: [] },
+            { ballLabel: '1.6', runs: 1, wickets: [] }
+          ];
+
+          for (let i = 0; i < over1Deliveries.length; i++) {
+            await createDelivery(prisma, {
+              inningsId: innings.id,
+              delivery: normalizedDelivery({
+                deliverySequence: over0Deliveries.length + i + 1,
+                display: { overNumber: 1, ballLabel: over1Deliveries[i].ballLabel },
+                players: {
+                  batterId: batter.id,
+                  nonStrikerId: nonStriker.id,
+                  bowlerId: bowler.id
+                },
+                runs: { batter: over1Deliveries[i].runs, total: over1Deliveries[i].runs },
+                wickets: over1Deliveries[i].wickets
+              })
+            });
+          }
+
+          // Synchronize timeline events
+          const liveTimeline = createTimelineService({ prisma });
+          await liveTimeline.synchronizeMatch({ matchId: seededMatch.id });
+
+          dbMatch = {
+            id: seededMatch.id,
+            players: [{ player: batter }]
+          };
+        }
+
+        try {
+          const liveAnalysisService = createAskMatchService({
+            prisma,
+            narrate: mockQueryAi.narrateAnalysis
+          });
+          const liveRecapService = createRecapService({
+            prisma,
+            narrate: mockQueryAi.narrateRecap
+          });
+          const liveTimelineService = createTimelineService({ prisma });
+          const liveEventSearchService = createEventSearchService({ prisma });
+          const liveApp = createApp({
+            stateCache: liveStateCache,
+            prismaClient: prisma,
+            recapService: liveRecapService,
+            matchQueryService: createMatchQueryService({
+              prisma,
+              aiClient: mockQueryAi,
+              analysisService: liveAnalysisService,
+              recapService: liveRecapService
+            }),
+            timelineService: liveTimelineService,
+            eventSearchService: liveEventSearchService
+          });
+
+          // 1. State API + Redis Caching Verification
+          const stateRes = await request(liveApp).get(`/api/matches/${dbMatch.id}/state`);
+          assert.equal(stateRes.status, 200);
+          assert.ok(stateRes.body.state.innings.length >= 1);
+
+          if (redisClient?.isOpen) {
+            const cached = await redisClient.get(`match:${dbMatch.id}:state`);
+            assert.ok(cached, 'Match state should be cached in Redis');
+            const parsed = JSON.parse(cached);
+            assert.equal(parsed.matchId, dbMatch.id);
+
+            // Second request should hit Redis cache
+            const cachedRes = await request(liveApp).get(`/api/matches/${dbMatch.id}/state`);
+            assert.equal(cachedRes.status, 200);
+            assert.equal(cachedRes.body.state.matchId, dbMatch.id);
+          }
+
+          // 2. Smart Match Timeline API
+          const timelineRes = await request(liveApp).get(
+            `/api/matches/${dbMatch.id}/timeline?limit=5`
+          );
+          assert.equal(timelineRes.status, 200);
+          assert.ok(timelineRes.body.events.length > 0);
+
+          // 3. Catch Me Up through the shared query endpoint
+          const recapRes = await request(liveApp)
+            .post(`/api/matches/${dbMatch.id}/query`)
+            .send({ query: 'Summarize the whole match' });
+          assert.equal(recapRes.status, 200);
+          assert.equal(recapRes.body.evidence.totals.runs > 0, true);
+
+          const recapLastNOvers = await request(liveApp)
+            .post(`/api/matches/${dbMatch.id}/query`)
+            .send({ query: 'Summarize the last 2 overs' });
+          assert.equal(recapLastNOvers.status, 200);
+          assert.equal(recapLastNOvers.body.tool, 'LAST_N_OVERS');
+          assert.equal(recapLastNOvers.body.window.overRange.requestedOvers, 2);
+
+          // 4. Authenticated Match-Session Join & Leave
+          const joinRes = await request(liveApp)
+            .post(`/api/matches/${dbMatch.id}/sessions/join`)
+            .send({});
+          assert.equal(joinRes.status, 201);
+          assert.ok(joinRes.body.session?.id);
+
+          const leaveRes = await request(liveApp)
+            .post(`/api/matches/${dbMatch.id}/sessions/leave`)
+            .send({ sessionId: joinRes.body.session.id });
+          assert.equal(leaveRes.status, 204);
+
+          // 5. Ask the Match through the shared query endpoint
+          const askRes = await request(liveApp)
+            .post(`/api/matches/${dbMatch.id}/query`)
+            .send({ query: 'Analyse the first over' });
+          assert.equal(askRes.status, 200);
+          assert.equal(askRes.body.tool, 'OVER_ANALYSIS');
+          assert.ok(askRes.body.evidence?.runs !== undefined);
+
+          // 6. Over Comparison Analytics API
+          const compareRes = await request(liveApp).get(
+            `/api/matches/${dbMatch.id}/analytics/overs/compare?innings=1&over1=0&over2=1`
+          );
+          assert.equal(compareRes.status, 200);
+          assert.equal(compareRes.body.analysis.type, 'OVER_COMPARISON');
+          assert.ok(compareRes.body.analysis.deltas);
+
+          // 7. Event Search API
+          const searchRes = await request(liveApp).get(
+            `/api/matches/${dbMatch.id}/events/search?types=FOUR,SIX&minimumImportance=HIGHLIGHT`
+          );
+          assert.equal(searchRes.status, 200);
+          assert.equal(searchRes.body.type, 'EVENT_SEARCH');
+          assert.ok(Array.isArray(searchRes.body.events));
+
+          // 8. Player Analytics API
+          if (dbMatch.players?.[0]?.player?.id) {
+            const playerId = dbMatch.players[0].player.id;
+            const playerRes = await request(liveApp).get(
+              `/api/matches/${dbMatch.id}/analytics/players/${playerId}`
+            );
+            assert.equal(playerRes.status, 200);
+            assert.equal(playerRes.body.analysis.type, 'PLAYER_ANALYSIS');
+          }
+        } finally {
+          if (liveStateCache && createdMatchId) {
+            await liveStateCache.clear(createdMatchId);
+          }
+          if (createdMatchId) {
+            await prisma.match.delete({ where: { id: createdMatchId } });
+          }
+          if (redisClient?.isOpen) {
+            await redisClient.quit();
+          }
+          await prisma.$disconnect();
+        }
       });
     }
   );

@@ -105,26 +105,86 @@ export class AnalyticsValidationError extends Error {
 }
 
 export async function analyzeOver(prisma, { matchId, inningsNumber, overNumber }) {
-  const innings = await prisma.innings.findFirst({
-    where: { matchId, inningsNumber },
-    include: { match: { select: { ballsPerOver: true } } }
+  if (
+    inningsNumber !== null &&
+    inningsNumber !== undefined &&
+    overNumber !== null &&
+    overNumber !== undefined
+  ) {
+    const innings = await prisma.innings.findFirst({
+      where: { matchId, inningsNumber },
+      include: { match: { select: { ballsPerOver: true } } }
+    });
+    if (!innings) throw new AnalyticsNotFoundError('Innings not found.');
+
+    const deliveries = await prisma.delivery.findMany({
+      where: { inningsId: innings.id, displayOver: overNumber },
+      include: deliveryInclude,
+      orderBy: { deliverySequence: 'asc' }
+    });
+    if (deliveries.length === 0) throw new AnalyticsNotFoundError('Over not found.');
+
+    return {
+      type: 'OVER_ANALYSIS',
+      matchId,
+      inningsId: innings.id,
+      inningsNumber,
+      overNumber,
+      ...overFacts(deliveries, innings.match.ballsPerOver)
+    };
+  }
+
+  const match = await prisma.match.findUnique({
+    where: { id: matchId },
+    select: { status: true, ballsPerOver: true }
   });
-  if (!innings) throw new AnalyticsNotFoundError('Innings not found.');
+  if (!match) throw new AnalyticsNotFoundError('Match not found.');
 
   const deliveries = await prisma.delivery.findMany({
-    where: { inningsId: innings.id, displayOver: overNumber },
-    include: deliveryInclude,
-    orderBy: { deliverySequence: 'asc' }
+    where: { innings: { matchId } },
+    include: {
+      ...deliveryInclude,
+      innings: { select: { id: true, inningsNumber: true } }
+    },
+    orderBy: [{ innings: { inningsNumber: 'asc' } }, { deliverySequence: 'asc' }]
   });
-  if (deliveries.length === 0) throw new AnalyticsNotFoundError('Over not found.');
+  if (deliveries.length === 0) {
+    throw new AnalyticsNotFoundError('No deliveries found for this match.');
+  }
 
+  const currentInningsNumber = inningsNumber ?? deliveries.at(-1)?.innings.inningsNumber;
+  const currentInningsDeliveries = deliveries.filter(
+    (d) => d.innings.inningsNumber === currentInningsNumber
+  );
+
+  const groups = [];
+  for (const d of currentInningsDeliveries) {
+    const lastGroup = groups.at(-1);
+    if (!lastGroup || lastGroup.overNumber !== d.displayOver) {
+      groups.push({
+        inningsId: d.innings.id,
+        inningsNumber: d.innings.inningsNumber,
+        overNumber: d.displayOver,
+        deliveries: [d]
+      });
+    } else {
+      lastGroup.deliveries.push(d);
+    }
+  }
+
+  const completedGroups = match.status === 'COMPLETE' ? groups : groups.slice(0, -1);
+  if (completedGroups.length === 0) {
+    throw new AnalyticsNotFoundError('No completed over is available in the current innings yet.');
+  }
+
+  const lastCompletedGroup = completedGroups.at(-1);
   return {
     type: 'OVER_ANALYSIS',
     matchId,
-    inningsId: innings.id,
-    inningsNumber,
-    overNumber,
-    ...overFacts(deliveries, innings.match.ballsPerOver)
+    inningsId: lastCompletedGroup.inningsId,
+    inningsNumber: lastCompletedGroup.inningsNumber,
+    overNumber: lastCompletedGroup.overNumber,
+    ...overFacts(lastCompletedGroup.deliveries, match.ballsPerOver)
   };
 }
 

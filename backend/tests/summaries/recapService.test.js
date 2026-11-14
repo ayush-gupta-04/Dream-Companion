@@ -33,20 +33,22 @@ function storedDelivery({ sequence, over, runs = 0, wicket = false }) {
   };
 }
 
-test('selects an allow-listed tool, builds deterministic evidence, then narrates it', async () => {
+function recapTool(tool, overrides = {}) {
+  return { tool, minutes: null, overs: null, ...overrides };
+}
+
+test('builds deterministic recap evidence before concise narration', async () => {
   const deliveries = [
     storedDelivery({ sequence: 1, over: 0, runs: 1 }),
     storedDelivery({ sequence: 2, over: 0, runs: 4 }),
     storedDelivery({ sequence: 3, over: 1, runs: 6 })
   ];
-  const aiClient = {
-    resolveIntent: async ({ query, sessionId }) => {
-      assert.equal(query, 'Summarize the whole match');
-      assert.equal(sessionId, undefined);
-      return { tool: 'WHOLE_MATCH', minutes: null, overs: null };
+  const service = createRecapService({
+    prisma: {
+      match: { findUnique: async () => ({ id: 'match-1', status: 'LIVE' }) },
+      delivery: { findMany: async () => deliveries }
     },
-    narrate: async ({ detail, evidence }) => {
-      assert.equal(detail, 'QUICK');
+    narrate: async ({ evidence }) => {
       assert.deepEqual(evidence.totals, {
         runs: 11,
         wickets: 0,
@@ -61,53 +63,45 @@ test('selects an allow-listed tool, builds deterministic evidence, then narrates
         summary: 'Eleven came quickly.',
         bullets: ['A four.', 'A six.']
       };
-    }
-  };
-  const service = createRecapService({
-    prisma: {
-      match: { findUnique: async () => ({ id: 'match-1', status: 'LIVE' }) },
-      delivery: { findMany: async () => deliveries }
     },
-    aiClient,
     executeTool: (input) => {
-      assert.deepEqual(input.tool, { tool: 'WHOLE_MATCH', minutes: null, overs: null });
+      assert.deepEqual(input.tool, recapTool('WHOLE_MATCH'));
       return executeRecapTool(input);
     }
   });
 
-  const result = await service.summarize({
+  const result = await service.execute({
     matchId: 'match-1',
-    request: { query: 'Summarize the whole match', detail: 'QUICK' }
+    request: { query: 'Summarize the whole match' },
+    tool: recapTool('WHOLE_MATCH')
   });
 
-  assert.equal(result.intent, 'WHOLE_MATCH');
+  assert.equal(result.tool, 'WHOLE_MATCH');
   assert.equal(result.recap.headline, 'Fast scoring');
   assert.equal(result.recap.factReferences.length, 3);
   assert.equal(result.evidence.totals.runs, 11);
 });
 
-test('does not call the model when a timestamp-less time window is unavailable', async () => {
+test('does not narrate a timestamp-less unavailable time window', async () => {
   const service = createRecapService({
     prisma: {
       match: { findUnique: async () => ({ id: 'match-1', status: 'LIVE' }) },
       delivery: { findMany: async () => [storedDelivery({ sequence: 1, over: 0 })] }
     },
-    aiClient: {
-      resolveIntent: async () => ({ tool: 'LAST_N_MINUTES', minutes: 10, overs: null }),
-      narrate: async () => assert.fail('Unexpected narration')
-    }
+    narrate: async () => assert.fail('Unexpected narration')
   });
 
-  const result = await service.summarize({
+  const result = await service.execute({
     matchId: 'match-1',
-    request: { query: 'Summarize the last 10 minutes', detail: 'QUICK' }
+    request: { query: 'Summarize the last 10 minutes' },
+    tool: recapTool('LAST_N_MINUTES', { minutes: 10 })
   });
 
   assert.equal(result.window.availability, 'UNAVAILABLE');
   assert.equal(result.recap, null);
 });
 
-test('builds recap evidence for the just-ended over before narration', async () => {
+test('builds evidence for the just-ended completed over before narration', async () => {
   const deliveries = [
     storedDelivery({ sequence: 1, over: 0, runs: 1 }),
     storedDelivery({ sequence: 2, over: 0, runs: 4 }),
@@ -118,23 +112,21 @@ test('builds recap evidence for the just-ended over before narration', async () 
       match: { findUnique: async () => ({ id: 'match-1', status: 'LIVE' }) },
       delivery: { findMany: async () => deliveries }
     },
-    aiClient: {
-      resolveIntent: async () => ({ tool: 'LAST_OVER', minutes: null, overs: null }),
-      narrate: async ({ evidence }) => {
-        assert.equal(evidence.totals.runs, 5);
-        assert.equal(evidence.window.overRange.startOverNumber, 0);
-        return {
-          headline: 'Completed over',
-          summary: 'Five runs came from the over.',
-          bullets: ['A four.']
-        };
-      }
+    narrate: async ({ evidence }) => {
+      assert.equal(evidence.totals.runs, 5);
+      assert.equal(evidence.window.overRange.startOverNumber, 0);
+      return {
+        headline: 'Completed over',
+        summary: 'Five runs came from the over.',
+        bullets: ['A four.']
+      };
     }
   });
 
-  const result = await service.summarize({
+  const result = await service.execute({
     matchId: 'match-1',
-    request: { query: 'Summarize this over', detail: 'QUICK' }
+    request: { query: 'Summarize this over' },
+    tool: recapTool('LAST_OVER')
   });
 
   assert.equal(result.window.type, 'LAST_OVER');
@@ -142,53 +134,27 @@ test('builds recap evidence for the just-ended over before narration', async () 
   assert.equal(result.evidence.totals.runs, 5);
 });
 
-test('rebuilds recap evidence after a corrected delivery instead of returning a stale summary', async () => {
+test('rebuilds recap evidence after a corrected delivery instead of using a stale summary', async () => {
   let deliveries = [storedDelivery({ sequence: 1, over: 0, runs: 1 })];
   const service = createRecapService({
     prisma: {
       match: { findUnique: async () => ({ id: 'match-1', status: 'LIVE' }) },
       delivery: { findMany: async () => deliveries }
     },
-    aiClient: {
-      resolveIntent: async () => ({ tool: 'WHOLE_MATCH', minutes: null, overs: null }),
-      narrate: async () => ({ headline: 'Recap', summary: 'Verified.', bullets: ['Verified.'] })
-    }
+    narrate: async () => ({ headline: 'Recap', summary: 'Verified.', bullets: ['Verified.'] })
   });
 
-  const first = await service.summarize({
+  const request = {
     matchId: 'match-1',
-    request: { query: 'Summarize the whole match', detail: 'QUICK' }
-  });
+    request: { query: 'Summarize the whole match' },
+    tool: recapTool('WHOLE_MATCH')
+  };
+  const first = await service.execute(request);
   deliveries = [storedDelivery({ sequence: 1, over: 0, runs: 4 })];
-  const corrected = await service.summarize({
-    matchId: 'match-1',
-    request: { query: 'Summarize the whole match', detail: 'QUICK' }
-  });
+  const corrected = await service.execute(request);
 
   assert.equal(first.evidence.totals.runs, 1);
   assert.equal(corrected.evidence.totals.runs, 4);
-});
-
-test('does not resolve deliveries or narrate when the selected tool is unsupported', async () => {
-  const service = createRecapService({
-    prisma: {
-      match: { findUnique: async () => ({ id: 'match-1', status: 'LIVE' }) },
-      delivery: { findMany: async () => assert.fail('Unexpected deterministic tool preparation') }
-    },
-    aiClient: {
-      resolveIntent: async () => ({ tool: 'UNSUPPORTED', minutes: null, overs: null }),
-      narrate: async () => assert.fail('Unexpected narration')
-    }
-  });
-
-  const result = await service.summarize({
-    matchId: 'match-1',
-    request: { query: 'Explain the captaincy strategy in detail', detail: 'QUICK' }
-  });
-
-  assert.equal(result.intent, 'UNSUPPORTED');
-  assert.equal(result.recap, null);
-  assert.equal(result.window, null);
 });
 
 test('creates a session marker at the latest stable match position', async () => {
@@ -213,15 +179,52 @@ test('creates a session marker at the latest stable match position', async () =>
         }
       }
     },
-    aiClient: null
+    narrate: null
   });
 
-  const session = await service.join({ matchId: 'match-1' });
+  const session = await service.join({
+    matchId: 'match-1',
+    viewer: { userId: 'user_123', sessionId: 'sess_123' }
+  });
 
   assert.deepEqual(created, {
     matchId: 'match-1',
+    clerkUserId: 'user_123',
+    clerkSessionId: 'sess_123',
     joinedInningsNumber: 2,
     joinedDeliverySequence: 8
   });
   assert.deepEqual(session.marker, { inningsNumber: 2, deliverySequence: 8 });
+});
+
+test("does not resolve another Clerk user's active session", async () => {
+  let sessionLookup;
+  const service = createRecapService({
+    prisma: {
+      matchSession: {
+        findFirst: async ({ where }) => {
+          sessionLookup = where;
+          return null;
+        }
+      }
+    },
+    narrate: async () => assert.fail('Unexpected narration')
+  });
+
+  await assert.rejects(
+    () =>
+      service.execute({
+        matchId: 'match-1',
+        match: { id: 'match-1', status: 'LIVE' },
+        request: {
+          query: 'What did I miss?',
+          sessionId: 'a998c18b-075a-4c6d-85a1-77382ebea8d5'
+        },
+        tool: recapTool('SINCE_SESSION_JOIN'),
+        viewer: { userId: 'user_other', sessionId: 'sess_other' }
+      }),
+    /Active match session not found/
+  );
+
+  assert.equal(sessionLookup.clerkUserId, 'user_other');
 });

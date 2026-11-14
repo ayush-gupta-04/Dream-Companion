@@ -108,3 +108,39 @@ test('joins a requested match room and receives only that room events', async ()
     await new Promise((resolve) => httpServer.close(resolve));
   }
 });
+
+test('rejects unauthenticated socket handshakes before joining a match room', async () => {
+  const httpServer = createServer();
+  const io = createSocketServer(httpServer, 'http://localhost:5173', {
+    authenticate: async (token) => {
+      if (token !== 'valid-token') throw new Error('Invalid token');
+      return { userId: 'user_test', sessionId: 'sess_test' };
+    }
+  });
+  await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+  const port = httpServer.address().port;
+  const anonymous = createClient(`http://127.0.0.1:${port}`, { transports: ['websocket'] });
+  const authenticated = createClient(`http://127.0.0.1:${port}`, {
+    transports: ['websocket'],
+    auth: { token: 'valid-token' }
+  });
+
+  try {
+    const error = await new Promise((resolve) => anonymous.once('connect_error', resolve));
+    assert.equal(error.message, 'Authentication is required.');
+
+    await new Promise((resolve, reject) => {
+      authenticated.once('connect', resolve);
+      authenticated.once('connect_error', reject);
+    });
+    const joined = await new Promise((resolve) =>
+      authenticated.emit('join_match', 'match-1', resolve)
+    );
+    assert.deepEqual(joined, { ok: true });
+  } finally {
+    anonymous.close();
+    authenticated.close();
+    io.close();
+    await new Promise((resolve) => httpServer.close(resolve));
+  }
+});

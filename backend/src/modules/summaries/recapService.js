@@ -1,4 +1,4 @@
-import { AiUnavailableError } from '../ai/openAiResponsesClient.js';
+import { AiUnavailableError } from '../ai/geminiClient.js';
 import { recapIntentSchema } from '../../schemas/recapSchemas.js';
 import { buildRecapEvidence, recapNarrationContext } from './recapEvidenceService.js';
 import { executeRecapTool } from './recapToolExecutor.js';
@@ -24,6 +24,11 @@ export class RecapValidationError extends Error {
     this.name = 'RecapValidationError';
     this.statusCode = 422;
   }
+}
+
+function requireViewer(viewer) {
+  if (!viewer?.userId) throw new RecapValidationError('Authentication is required.');
+  return viewer;
 }
 
 function publicWindow(window, availability = window.availability) {
@@ -59,9 +64,9 @@ async function requireMatch(prisma, matchId) {
   return match;
 }
 
-async function requireActiveSession(prisma, matchId, sessionId) {
+async function requireActiveSession(prisma, matchId, sessionId, clerkUserId) {
   const session = await prisma.matchSession.findFirst({
-    where: { id: sessionId, matchId, leftAt: null },
+    where: { id: sessionId, matchId, clerkUserId, leftAt: null },
     select: {
       id: true,
       joinedInningsNumber: true,
@@ -73,9 +78,10 @@ async function requireActiveSession(prisma, matchId, sessionId) {
   return session;
 }
 
-export function createRecapService({ prisma, aiClient, executeTool = executeRecapTool }) {
+export function createRecapService({ prisma, narrate, executeTool = executeRecapTool }) {
   return {
-    async join({ matchId }) {
+    async join({ matchId, viewer }) {
+      const { userId, sessionId } = requireViewer(viewer);
       await requireMatch(prisma, matchId);
       const latestDelivery = await prisma.delivery.findFirst({
         where: { innings: { matchId } },
@@ -89,6 +95,8 @@ export function createRecapService({ prisma, aiClient, executeTool = executeReca
       const session = await prisma.matchSession.create({
         data: {
           matchId,
+          clerkUserId: userId,
+          clerkSessionId: sessionId,
           joinedInningsNumber: latestDelivery?.innings.inningsNumber,
           joinedDeliverySequence: latestDelivery?.deliverySequence
         },
@@ -109,42 +117,45 @@ export function createRecapService({ prisma, aiClient, executeTool = executeReca
       };
     },
 
-    async leave({ matchId, sessionId }) {
+    async leave({ matchId, sessionId, viewer }) {
+      const { userId } = requireViewer(viewer);
       const session = await prisma.matchSession.updateMany({
-        where: { id: sessionId, matchId, leftAt: null },
+        where: { id: sessionId, matchId, clerkUserId: userId, leftAt: null },
         data: { leftAt: new Date() }
       });
       if (session.count === 0) throw new RecapNotFoundError('Active match session not found.');
     },
 
-    async summarize({ matchId, request }) {
-      if (!aiClient) throw new AiUnavailableError('Catch Me Up is not configured.');
-      const match = await requireMatch(prisma, matchId);
-      const intent = recapIntentSchema.parse(
-        await aiClient.resolveIntent({
-          query: request.query,
-          sessionId: request.sessionId
-        })
-      );
 
-      if (intent.tool === 'UNSUPPORTED') {
-        return {
-          intent: intent.tool,
-          window: null,
-          recap: null,
-          evidence: null,
-          limitations: [
-            'This recap request is not yet supported. Try the last over, last N overs, last N minutes, what you missed, or the whole match.'
-          ]
-        };
-      }
+
+
+    // The main function which builds the window according to the Selected Tool.
+    // LAST_N_OVERS.
+    // LAST_OVER
+    // LAST_N_MINUTES
+    // SINCE_SESSION_JOIN
+    // WHOLE_MATCH
+    async execute({ matchId, match: suppliedMatch, request, tool, viewer }) {
+      if (!narrate) throw new AiUnavailableError();
+      const match = suppliedMatch ?? (await requireMatch(prisma, matchId));
+      const intent = recapIntentSchema.parse({
+        tool: tool.tool,
+        minutes: tool.minutes,
+        overs: tool.overs
+      });
 
       if (intent.tool === 'SINCE_SESSION_JOIN' && !request.sessionId) {
         throw new RecapValidationError('Join the match before asking what you missed.');
       }
+      const authenticatedViewer = intent.tool === 'SINCE_SESSION_JOIN' ? requireViewer(viewer) : viewer;
       const session =
         intent.tool === 'SINCE_SESSION_JOIN'
-          ? await requireActiveSession(prisma, matchId, request.sessionId)
+          ? await requireActiveSession(
+              prisma,
+              matchId,
+              request.sessionId,
+              authenticatedViewer.userId
+            )
           : null;
       const deliveries = await prisma.delivery.findMany({
         where: { innings: { matchId } },
@@ -160,29 +171,28 @@ export function createRecapService({ prisma, aiClient, executeTool = executeReca
 
       if (window.availability === 'UNAVAILABLE') {
         return {
-          intent: intent.tool,
+          tool: intent.tool,
           window: publicWindow(window),
           recap: null,
           evidence: null,
           limitations: window.limitations
         };
       }
-      if (window.deliveries.length === 0) return { intent: intent.tool, ...emptyResult(window) };
+      if (window.deliveries.length === 0) return { tool: intent.tool, ...emptyResult(window) };
 
       const evidence = buildRecapEvidence({
         matchId,
         deliveries: window.deliveries,
         window
       });
-      const narration = await aiClient.narrate({
+      const narration = await narrate({
         query: request.query,
-        detail: request.detail,
         evidence: recapNarrationContext(evidence)
       });
       return {
-        intent: intent.tool,
+        tool: intent.tool,
         window: publicWindow(window),
-        recap: { detail: request.detail, ...narration, factReferences: evidence.references },
+        recap: { ...narration, factReferences: evidence.references },
         evidence,
         limitations: window.limitations
       };

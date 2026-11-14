@@ -22,10 +22,11 @@ After the Phase 1 React shell and Express foundation, implementation proceeds ba
 | Cache       | Redis                                       | Current match snapshot, hot reads, transient state           |
 | Realtime    | Socket.IO                                   | Push live updates to connected clients                       |
 | Jobs        | BullMQ + Redis                              | Asynchronous enrichment and summary work                     |
-| AI          | OpenAI API                                  | Intent extraction and grounded natural-language explanations |
+| AI          | Gemini API (Google AI Studio)               | Intent extraction and grounded natural-language explanations |
+| Auth        | Clerk (`@clerk/react`, `@clerk/express`)    | User identity and API/socket authentication                  |
 | Local infra | Docker Compose                              | Repeatable local PostgreSQL/Redis setup                      |
 
-For the MVP, Cricsheet historical JSON 1.x data is the selected source and an in-house Node.js replay engine provides a simulated real-time feed. This is not a live commercial provider integration. The Phase 3 adapter uses source array position for an internal delivery sequence, source payload fingerprints for replay idempotency/corrections, and Cricsheet registry IDs for player identity. It does not infer event-occurrence timestamps from replay timing. Video seeking is intentionally excluded from scope; production hosting, OpenAI configuration, and any future live provider remain undecided. The MVP is anonymous and does not require an authentication provider.
+For the MVP, Cricsheet historical JSON 1.x data is the selected source. At API startup the local archive is persisted as completed historical matches, except `1001349.json` (Australia v Sri Lanka, 2017-02-17), which is bootstrapped without deliveries as the one simulated-live match. An in-house Node.js replay engine starts that source when a fan opens its workspace. This is not a live commercial provider integration. The Phase 3 adapter uses source array position for an internal delivery sequence, source payload fingerprints for replay idempotency/corrections, and Cricsheet registry IDs for player identity. It does not infer event-occurrence timestamps from replay timing. Video seeking is intentionally excluded from scope; Gemini API (Google AI Studio) and Clerk are the selected AI and authentication providers; production hosting and any future live provider remain undecided.
 
 ## 3. High-level data flow
 
@@ -78,7 +79,12 @@ Match Intelligence Engine          BullMQ jobs
 
 ### 4.1 Ingestion module
 
-- In the MVP, parse selected Cricsheet historical match files and accept replay-engine emissions at a controlled pace.
+- At API startup, discover and parse every Cricsheet match in the configured
+  local archive. Persist non-live sources through the normal delivery and
+  timeline pipeline, skipping sources already complete at the same revision.
+- Bootstrap the configured live source's metadata/identity records but clear
+  its delivery-derived state. When its workspace opens, one in-process manager
+  resets only that match and starts replay; concurrent fans attach to it.
 - Keep the adapter boundary so a future live provider can use polling or webhooks without changing provider-neutral domain code.
 - Preserve provider payloads for debugging/reconciliation where practical.
 - Convert provider-specific formats into internal domain contracts.
@@ -124,7 +130,8 @@ One shared domain layer used by all three product features.
 ### 4.3 AI Query Orchestrator
 
 - Receive a user query and match/session context.
-- Use the model to classify intent and extract structured parameters.
+- Use the model once to select exactly one allow-listed analysis or recap tool
+  and extract structured parameters.
 - Validate match, innings, player, over, and range against backend data.
 - Call only allow-listed domain functions.
 - Assemble compact evidence/context from database and analytics results.
@@ -132,44 +139,47 @@ One shared domain layer used by all three product features.
 - Return event/delivery references for UI navigation.
 - Handle unsupported questions and missing data transparently.
 
-The model is not the source of truth and must not receive unrestricted database access.
-
-For Phase 4, the Ask the Match API supports over analysis, player analysis,
-over comparison, and factual timeline-event search. The orchestrator extracts a
-structured intent, invokes a fixed backend allow-list, and asks the model to
-narrate the resulting evidence. Event search uses validated structured filters
-over persisted timeline records, never generated commentary or unrestricted text
-search. The API returns deterministic facts and delivery/timeline references
-separately from the model's interpretation. Missing credentials, provider
-failures, refusals, or incomplete model output are surfaced as unavailable/error
-states rather than replaced with invented analysis.
+The model is not the source of truth and must not receive unrestricted database
+access. `POST /api/matches/:matchId/query` is the one natural-language endpoint
+for Ask the Match and Catch Me Up. Its strict request body is `{ query,
+sessionId? }`; it does not accept a feature selector or recap detail level. The
+orchestrator exposes only `OVER_ANALYSIS`, `PLAYER_ANALYSIS`,
+`OVER_COMPARISON`, `EVENT_SEARCH`, `LAST_OVER`, `LAST_N_OVERS`,
+`LAST_N_MINUTES`, `SINCE_SESSION_JOIN`, and `WHOLE_MATCH`. `UNSUPPORTED` does
+not invoke a domain tool or narration. Event search uses validated structured
+filters over persisted timeline records, never generated commentary or
+unrestricted text search. The response keeps deterministic evidence and
+delivery/timeline references separate from the model's interpretation. Missing
+credentials, provider failures, refusals, or incomplete model output are
+surfaced as unavailable/error states rather than replaced with invented analysis.
 
 ### 4.4 Catch Me Up / Summary Engine
 
 - Resolve each recap request to a delivery sequence/time range.
 - Fetch timeline events and deliveries for that range.
 - Reuse cached over summaries and derived stats where useful.
-- Generate quick or detailed narrative from this evidence.
+- Generate one short recap from this evidence: a concise summary and 3–5
+  factual bullets.
 - Store per-session join markers for “what did I miss?”.
 - Refresh summaries after corrections to underlying deliveries.
 
 Phase 5 resolves recap windows from ordered persisted deliveries on demand. It
-stores only an anonymous session join marker (innings number and delivery
-sequence), never a display label, and rebuilds evidence for each request. This
+stores a viewer session marker scoped to one Clerk user (innings number and
+delivery sequence), never a display label, and rebuilds evidence for each request. This
 makes provider corrections visible immediately without a summary-cache
-invalidation path. Catch Me Up follows the same two-step orchestration as Ask
-the Match: the first model call can select only a validated recap tool
+invalidation path. Once the shared query orchestrator selects a recap tool
 (`LAST_OVER`, `LAST_N_OVERS`, `LAST_N_MINUTES`, `SINCE_SESSION_JOIN`, or
-`WHOLE_MATCH`) and bounded arguments; the selected backend tool resolves the
-window and constructs evidence; a second model call narrates only that compact
-deterministic evidence. The model never calculates match figures, selects
-deliveries, or accesses the database. Cricsheet replay deliveries have no
-trustworthy occurrence timestamps, so time-based recaps return an explicit
-unavailable state rather than a false wall-clock approximation. `LAST_OVER` and
-`LAST_N_OVERS` resolve only completed over groups from the current innings; a
-live partial over is excluded and completion is inferred from an over
-transition or completed innings, not a fixed delivery count. Timeline events
-remain a Phase 6 enhancement and are not required for Phase 5 recaps.
+`WHOLE_MATCH`) and bounded arguments, the selected backend tool resolves the
+window and constructs evidence; a second model call produces the short recap
+only from that compact deterministic evidence. The model never calculates match
+figures, selects deliveries, or accesses the database. Cricsheet replay
+deliveries have no trustworthy occurrence timestamps, so time-based recaps
+return an explicit unavailable state rather than a false wall-clock
+approximation. `LAST_OVER` and `LAST_N_OVERS` resolve only completed over groups
+from the current innings; a live partial over is excluded and completion is
+inferred from an over transition or completed innings, not a fixed delivery
+count. Timeline events remain a Phase 6 enhancement and are not required for
+Phase 5 recaps.
 
 ### 4.5 Timeline Engine
 
@@ -250,26 +260,31 @@ These are initial candidates, not a requirement to implement all at once.
 
 **Matches**
 
+- `GET /api/matches` — card-safe match summaries for the authenticated match
+  directory, including
+  `id`, display name, status, and a factual `freshness.updatedAt` timestamp.
+  Delivery ingestion time is used when available; otherwise the response falls
+  back to the match metadata timestamp. It includes live and non-live matches
+  without exposing database models directly.
 - `GET /api/matches/live`
 - `GET /api/matches/:matchId`
 - `GET /api/matches/:matchId/state`
 - `GET /api/matches/:matchId/deliveries`
 - `GET /api/matches/:matchId/players`
+- `POST /api/matches/:matchId/live-simulation` — an authenticated, body-less
+  activation for the one backend-designated live match. It does not accept a
+  source file, interval, reset flag, or administrator-only capability.
 
-**Ask the Match**
+**Natural-language match query (Ask the Match + Catch Me Up)**
 
-- `POST /api/matches/:matchId/ask`
-- `GET /api/conversations/:conversationId`
+- `POST /api/matches/:matchId/query` with `{ "query": "...", "sessionId": "optional UUID" }`
 - `GET /api/matches/:matchId/analytics/overs/:overNumber`
 - `GET /api/matches/:matchId/analytics/overs/compare`
 - `GET /api/matches/:matchId/analytics/players/:playerId`
 - `GET /api/matches/:matchId/events/search`
 
-**Catch Me Up**
+**Catch Me Up session context**
 
-- `POST /api/matches/:matchId/summaries`
-- `GET /api/matches/:matchId/summaries/overs/:overNumber`
-- `GET /api/matches/:matchId/summaries/innings/:inningsNumber`
 - `POST /api/matches/:matchId/sessions/join`
 - `POST /api/matches/:matchId/sessions/leave`
 
@@ -331,7 +346,12 @@ The Smart Match Timeline, Ask the Match, and Catch Me Up focus strictly on impor
 - Validate all provider payloads and user input.
 - Rate-limit user-facing AI endpoints and enforce request size/time limits.
 - Protect API keys and provider secrets in environment variables.
-- The MVP is anonymous: do not introduce account authentication or private user data. If a persisted viewer-session marker is added later, use an opaque, non-identifying, unguessable session identifier and protect it from cross-session access.
+- Clerk is the identity source of truth. Do not store Clerk passwords, emails, or profile data in PostgreSQL; persist only stable Clerk IDs where ownership is required.
+- Require a verified Clerk session for user-facing API and Socket.IO access.
+  Keep health endpoints public. The one live-simulation activation is available
+  to every authenticated fan and is constrained by backend configuration; no
+  replay/reset or database-purge admin surface exists.
+- A persisted viewer-session marker remains opaque, but must be scoped to its authenticated Clerk user before it is read, used, or closed.
 - Add structured logs with match/provider/event identifiers; avoid logging secrets or unnecessary personal data.
 - Make webhook handlers and queue processors idempotent.
 - Handle provider downtime, delayed updates, stale cache, and partial match data.

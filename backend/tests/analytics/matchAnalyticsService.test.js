@@ -90,6 +90,35 @@ describe('match analytics', () => {
     );
   });
 
+  test('resolves the last completed over dynamically when over number is omitted', async () => {
+    const over0 = deliveries;
+    const over1 = [
+      {
+        ...deliveries[0],
+        id: 'delivery-4',
+        deliverySequence: 4,
+        displayOver: 1,
+        displayBallLabel: '1.1',
+        batterRuns: 6,
+        totalRuns: 6,
+        innings: { id: 'innings-1', inningsNumber: 1 }
+      }
+    ];
+    const allDeliveries = [
+      ...over0.map((d) => ({ ...d, innings: { id: 'innings-1', inningsNumber: 1 } })),
+      ...over1
+    ];
+    const prisma = {
+      match: { findUnique: async () => ({ status: 'IN_PROGRESS', ballsPerOver: 6 }) },
+      delivery: { findMany: async () => allDeliveries }
+    };
+
+    const analysis = await analyzeOver(prisma, { matchId: 'match-1' });
+
+    assert.equal(analysis.overNumber, 0);
+    assert.equal(analysis.runs, 5);
+  });
+
   test('compares two stored overs with directional factual deltas', async () => {
     const secondOver = [
       {

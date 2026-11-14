@@ -3,6 +3,10 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.js'
+  },
   server: {
     port: 5173,
     proxy: {
@@ -13,8 +17,16 @@ export default defineConfig({
       '/health': {
         target: 'http://localhost:3001',
         changeOrigin: true
+      },
+      '/match-card-images': {
+        target: 'http://localhost:3001',
+        changeOrigin: true
+      },
+      '/socket.io': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        ws: true
       }
     }
   }
 });
-

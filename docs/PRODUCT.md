@@ -10,6 +10,12 @@ The three MVP experiences share the same live match data and intelligence layer:
 2. Catch Me Up
 3. Smart Match Timeline
 
+Ask the Match and Catch Me Up share one natural-language input and one backend
+query endpoint. The model selects exactly one validated analysis or recap tool;
+the backend executes it against verified match data; a second model call writes
+the user-facing response from that evidence only. Fans never need to choose an
+endpoint or feature mode before asking a question.
+
 ## 2. Feature: Ask the Match
 
 ### Goal
@@ -71,19 +77,20 @@ Give a fan a useful recap of match action they missed or a chosen period of play
 - The just-ended over.
 - The last N completed overs.
 
-### Detail levels
+### Response length
 
-- Quick recap: approximately 3–5 concise bullets focused on key events.
-- Detailed recap: a structured narrative with relevant overs, wickets, partnerships, player contributions, and turning points.
+Every recap is short: a concise summary followed by approximately 3–5 factual
+bullets focused on key events. The MVP does not expose a detailed-recap mode.
 
 ### Natural-language requests
 
 - A fan can ask for a recap in natural language, for example “summarize this
   over”, “summarize the last 2 overs”, or “summarize the last 15 minutes”.
-- The AI first selects one bounded recap tool and extracts only its required
-  parameter (such as an over count or minute count). Backend code validates the
-  selection, resolves the exact window, and calculates all recap facts. A
-  second AI call writes the response solely from that deterministic evidence.
+- The shared query orchestrator first selects one bounded analysis or recap
+  tool and extracts only its required parameter (such as an over count or
+  minute count). Backend code validates the selection, resolves any recap
+  window, and calculates all facts. A second AI call writes the response solely
+  from that deterministic evidence.
 - “This over” means the most recently completed over. It never includes a live
   partial over.
 
@@ -137,6 +144,37 @@ Event type and importance are separate concepts. A four is an event type; whethe
 - Separate factual match events from commentary or AI interpretation.
 - Clearly distinguish unavailable information from a zero value.
 
+### 5.1 MVP match browsing and companion surface
+
+- The home page makes every match returned by the backend match-list contract
+  available through accessible, client-side pages of 12 cards. Each card
+  identifies the match and its status; `LIVE` matches are visibly highlighted
+  without implying commercial live-data coverage.
+- At backend startup, every local Cricsheet JSON file is persisted as a
+  historical completed match except the configured `1001349.json` source. That
+  source appears as the one simulated-live card with its metadata but no
+  delivery history.
+- Opening that live workspace starts or joins the one backend replay. A replay
+  reset removes only that match's delivery-derived records and viewer-session
+  markers; all historical matches remain available. A second fan joins an
+  already-running replay instead of restarting it. There are no admin replay,
+  speed, reset, or database-purge controls.
+- Selecting a match opens its companion page. The page initially contains a
+  clearly labelled, non-playing video-player placeholder. It has no media
+  source, playback controls, seeking, or playback synchronization in the MVP.
+- The companion page shows a compact factual current-match-state panel, a
+  scrollable set of Smart Match Timeline event cards, and one shared chat
+  surface for Ask the Match and Catch Me Up.
+- The chat surface offers these prewritten natural-language prompts as well as
+  a free-text query field: “What did I miss since I joined?”, “Summarize the
+  last over”, “Summarize the last 10 minutes”, “Analyse the last over”, and
+  “Analyze the first over”. A prompt click and a typed submission use the same
+  validated match-query endpoint; the UI does not select an AI tool itself.
+- “What did I miss since I joined?” records a signed-in viewer's match-session
+  marker when the companion page opens. A time-window response that is unavailable
+  for Cricsheet data must show the backend limitation rather than infer a
+  recap from replay timing.
+
 ## 6. Scope decision: Video seeking excluded in favor of Event Timeline
 
 Video seeking and actual video playback synchronization are intentionally excluded from the product scope.
@@ -155,14 +193,17 @@ Video seeking and actual video playback synchronization are intentionally exclud
 
 ### In scope
 
-- One supported Cricsheet historical-data adapter, replayed as a simulated live feed by an in-house Node.js engine.
+- One supported Cricsheet historical-data adapter. The local archive is
+  persisted at startup, while one configured source is replayed as a simulated
+  live feed by an in-house Node.js engine.
 - Replay score/delivery ingestion and normalized data model.
 - Deterministic cricket calculations for selected MVP metrics.
 - One shared Match Intelligence Engine.
 - The three user-facing experiences above.
 - Realtime UI updates.
 - Repeatable historical match replay/simulation for development, testing, and MVP demos.
-- Anonymous use; no account or login requirement.
+- Clerk-managed sign-in is required for match data, companion queries, timeline
+  updates, and viewer-session recaps. Health endpoints remain public.
 
 ### Not required for the first MVP
 

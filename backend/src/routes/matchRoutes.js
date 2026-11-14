@@ -1,14 +1,27 @@
 import { Router } from 'express';
 import { prisma } from '../db/prisma.js';
 import { buildMatchState } from '../modules/match-intelligence/state/matchStateService.js';
+import { listMatchCards } from '../modules/matches/matchDirectoryService.js';
 
 function parseLimit(value) {
   const limit = Number.parseInt(value ?? '50', 10);
   return Number.isInteger(limit) && limit > 0 ? Math.min(limit, 100) : 50;
 }
 
-export function createMatchRoutes({ stateCache, prismaClient = prisma } = {}) {
+export function createMatchRoutes({ stateCache, prismaClient = prisma, liveReplayManager } = {}) {
   const router = Router();
+
+  router.get('/matches', async (req, res, next) => {
+    try {
+      res.json(
+        await listMatchCards(prismaClient, {
+          isLiveMatchId: (matchId) => liveReplayManager?.isLiveMatchId(matchId)
+        })
+      );
+    } catch (error) {
+      next(error);
+    }
+  });
 
   router.get('/matches/live', async (req, res, next) => {
     try {
@@ -34,7 +47,12 @@ export function createMatchRoutes({ stateCache, prismaClient = prisma } = {}) {
         res.status(404).json({ status: 'error', message: 'Match not found.' });
         return;
       }
-      res.json({ state });
+      res.json({
+        state: {
+          ...state,
+          isLiveSimulation: Boolean(liveReplayManager?.isLiveMatchId(req.params.matchId))
+        }
+      });
     } catch (error) {
       next(error);
     }
