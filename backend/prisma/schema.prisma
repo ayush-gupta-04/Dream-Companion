@@ -1,0 +1,223 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MatchStatus {
+  SCHEDULED
+  LIVE
+  COMPLETE
+  ABANDONED
+}
+
+enum InningsStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETE
+}
+
+enum TimelineEventType {
+  WICKET
+  FOUR
+  SIX
+  BATTER_MILESTONE
+  PARTNERSHIP_MILESTONE
+  MAIDEN_OVER
+  EXPENSIVE_OVER
+  SCORING_RATE_SHIFT
+}
+
+enum TimelineImportanceLevel {
+  MINOR
+  HIGHLIGHT
+  MAJOR
+}
+
+model Match {
+  id             String          @id @default(cuid())
+  name           String
+  source         String?
+  sourceMatchId  String?
+  sourceRevision String?
+  ballsPerOver   Int             @default(6)
+  status         MatchStatus     @default(SCHEDULED)
+  startedAt      DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  teams          MatchTeam[]
+  players        MatchPlayer[]
+  innings        Innings[]
+  sessions       MatchSession[]
+  timelineEvents TimelineEvent[]
+
+  @@unique([source, sourceMatchId])
+}
+
+model Team {
+  id             String        @id @default(cuid())
+  name           String
+  shortName      String?
+  source         String?
+  sourceTeamId   String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  matches        MatchTeam[]
+  players        MatchPlayer[]
+  battingInnings Innings[]     @relation("BattingTeam")
+
+  @@unique([source, sourceTeamId])
+}
+
+model Player {
+  id                     String           @id @default(cuid())
+  displayName            String
+  source                 String?
+  sourcePlayerId         String?
+  metadata               Json?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+  matchAppearances       MatchPlayer[]
+  deliveriesAsBatter     Delivery[]       @relation("Batter")
+  deliveriesAsNonStriker Delivery[]       @relation("NonStriker")
+  deliveriesAsBowler     Delivery[]       @relation("Bowler")
+  wicketsLost            DeliveryWicket[] @relation("PlayerOut")
+
+  @@unique([source, sourcePlayerId])
+}
+
+model MatchTeam {
+  matchId   String
+  teamId    String
+  isHome    Boolean?
+  createdAt DateTime @default(now())
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Restrict)
+
+  @@id([matchId, teamId])
+}
+
+model MatchPlayer {
+  matchId   String
+  playerId  String
+  teamId    String
+  createdAt DateTime @default(now())
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Restrict)
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Restrict)
+
+  @@id([matchId, playerId])
+  @@index([matchId, teamId])
+}
+
+model Innings {
+  id              String          @id @default(cuid())
+  matchId         String
+  inningsNumber   Int
+  battingTeamId   String
+  sourceInningsId String?
+  targetRuns      Int?
+  prePenaltyRuns  Int             @default(0)
+  postPenaltyRuns Int             @default(0)
+  status          InningsStatus   @default(PENDING)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  match           Match           @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  battingTeam     Team            @relation("BattingTeam", fields: [battingTeamId], references: [id], onDelete: Restrict)
+  deliveries      Delivery[]
+  timelineEvents  TimelineEvent[]
+
+  @@unique([matchId, inningsNumber])
+  @@index([sourceInningsId])
+}
+
+model Delivery {
+  id               String           @id @default(cuid())
+  inningsId        String
+  deliverySequence Int
+  sourceDeliveryId String?
+  sourceRevision   String?
+  displayOver      Int
+  displayBallLabel String
+  batterId         String
+  nonStrikerId     String
+  bowlerId         String
+  batterRuns       Int
+  totalExtras      Int
+  totalRuns        Int
+  wides            Int              @default(0)
+  noBalls          Int              @default(0)
+  byes             Int              @default(0)
+  legByes          Int              @default(0)
+  penaltyRuns      Int              @default(0)
+  isLegalDelivery  Boolean
+  occurredAt       DateTime?
+  ingestedAt       DateTime         @default(now())
+  rawPayload       Json?
+  innings          Innings          @relation(fields: [inningsId], references: [id], onDelete: Cascade)
+  batter           Player           @relation("Batter", fields: [batterId], references: [id], onDelete: Restrict)
+  nonStriker       Player           @relation("NonStriker", fields: [nonStrikerId], references: [id], onDelete: Restrict)
+  bowler           Player           @relation("Bowler", fields: [bowlerId], references: [id], onDelete: Restrict)
+  wickets          DeliveryWicket[]
+  timelineEvents   TimelineEvent[]
+
+  @@unique([inningsId, deliverySequence])
+  @@unique([inningsId, sourceDeliveryId])
+  @@index([inningsId, occurredAt])
+}
+
+model DeliveryWicket {
+  id             String   @id @default(cuid())
+  deliveryId     String
+  wicketSequence Int
+  playerOutId    String
+  kind           String
+  countsAsWicket Boolean  @default(true)
+  fielders       Json?
+  delivery       Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  playerOut      Player   @relation("PlayerOut", fields: [playerOutId], references: [id], onDelete: Restrict)
+
+  @@unique([deliveryId, wicketSequence])
+}
+
+model MatchSession {
+  id                     String    @id @default(uuid())
+  matchId                String
+  joinedInningsNumber    Int?
+  joinedDeliverySequence Int?
+  joinedAt               DateTime  @default(now())
+  leftAt                 DateTime?
+  match                  Match     @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@index([matchId, leftAt])
+}
+
+model TimelineEvent {
+  id               String                  @id @default(cuid())
+  matchId          String
+  inningsId        String
+  deliveryId       String
+  deliverySequence Int
+  eventOrder       Int
+  displayOver      Int
+  displayBallLabel String
+  type             TimelineEventType
+  eventKey         String
+  title            String
+  description      String
+  importanceScore  Int
+  importanceLevel  TimelineImportanceLevel
+  occurredAt       DateTime?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  match            Match                   @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  innings          Innings                 @relation(fields: [inningsId], references: [id], onDelete: Cascade)
+  delivery         Delivery                @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, eventKey])
+  @@unique([inningsId, deliverySequence, eventOrder])
+  @@index([matchId, inningsId, deliverySequence, eventOrder])
+}

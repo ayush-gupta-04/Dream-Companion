@@ -1,0 +1,28 @@
+{
+  "name": "live-cricket-ai-copilot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n \"backend,frontend\" -c \"blue,green\" \"npm --workspace backend run dev\" \"npm --workspace frontend run dev\"",
+    "dev:backend": "npm --workspace backend run dev",
+    "dev:frontend": "npm --workspace frontend run dev",
+    "build": "npm --workspace frontend run build",
+    "test": "npm --workspace backend run test",
+    "lint": "eslint .",
+    "format:check": "prettier --check \"**/*.{js,jsx,json,md,css,yml,yaml}\"",
+    "format": "prettier --write \"**/*.{js,jsx,json,md,css,yml,yaml}\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "concurrently": "^9.1.2",
+    "eslint": "^9.20.0",
+    "globals": "^15.15.0",
+    "prettier": "^3.5.0"
+  }
+}
+
