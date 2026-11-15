@@ -16,19 +16,14 @@ function createBowlerState() {
   return { legalDeliveries: 0, overs: '0.0', runsConceded: 0, wickets: 0, economy: 0 };
 }
 
-function updateRates(state) {
-  for (const batter of Object.values(state.batters)) {
-    batter.strikeRate =
-      batter.ballsFaced === 0 ? 0 : round((batter.runs / batter.ballsFaced) * 100);
-  }
-
-  for (const bowler of Object.values(state.bowlers)) {
-    bowler.overs = formatOvers(bowler.legalDeliveries, state.ballsPerOver);
-    bowler.economy =
-      bowler.legalDeliveries === 0
-        ? 0
-        : round((bowler.runsConceded * (state.ballsPerOver ?? 6)) / bowler.legalDeliveries);
-  }
+function updateRates(state, batter, bowler) {
+  batter.strikeRate =
+    batter.ballsFaced === 0 ? 0 : round((batter.runs / batter.ballsFaced) * 100);
+  bowler.overs = formatOvers(bowler.legalDeliveries, state.ballsPerOver);
+  bowler.economy =
+    bowler.legalDeliveries === 0
+      ? 0
+      : round((bowler.runsConceded * (state.ballsPerOver ?? 6)) / bowler.legalDeliveries);
 
   state.overs = formatOvers(state.legalDeliveries, state.ballsPerOver);
   return state;
@@ -93,5 +88,5 @@ export function applyDeliveryToInningsState(state, delivery) {
     }
   }
 
-  return updateRates(state);
+  return updateRates(state, batter, bowler);
 }

@@ -1,13 +1,11 @@
 import { prisma } from '../../db/prisma.js';
 import {
-  detectBatterMilestoneEvents,
-  detectBoundaryAndWicketEvents,
-  detectPartnershipMilestoneEvents,
+  applyDeliveryToTimelineState,
+  createTimelineState,
   detectTimelineEvents,
-  eventForCompletedOver
+  finishTimelineInnings
 } from './timelineEventDetector.js';
 import { toTimelineEvent } from './timelineEventPresenter.js';
-import { PARTNERSHIP_MILESTONES } from './timelineRules.js';
 
 const deliveryInclude = {
   batter: { select: { id: true, displayName: true } },
@@ -62,6 +60,62 @@ function assertUniqueEventKeys(events) {
     }
     keys.add(event.eventKey);
   }
+}
+
+async function writeEvents(transaction, matchId, desired, existing) {
+  const existingByKey = new Map(existing.map((event) => [event.eventKey, event]));
+  const changes = { created: [], updated: [], deleted: [] };
+  for (const event of desired) {
+    const prior = existingByKey.get(event.eventKey);
+    const data = eventData(matchId, event);
+    if (!prior) {
+      const created = await transaction.timelineEvent.create({ data });
+      changes.created.push(toTimelineEvent(created, event.inningsNumber));
+    } else if (eventChanged(prior, event)) {
+      const updated = await transaction.timelineEvent.update({ where: { id: prior.id }, data });
+      changes.updated.push(toTimelineEvent(updated, event.inningsNumber));
+    }
+  }
+  return changes;
+}
+
+async function recordEvents({ matchId, innings, events }) {
+  if (!events.length) return { created: [], updated: [], deleted: [] };
+  assertUniqueEventKeys(events);
+  const desired = events.map((event) => ({ ...event, inningsNumber: innings.inningsNumber }));
+  return prisma.$transaction(async (transaction) => {
+    const existing = await transaction.timelineEvent.findMany({
+      where: { matchId, eventKey: { in: events.map((event) => event.eventKey) } }
+    });
+    return writeEvents(transaction, matchId, desired, existing);
+  });
+}
+
+function deliveryWithPlayers(delivery, players) {
+  const player = (id) => {
+    const found = players.get(id);
+    if (!found) throw new TimelineValidationError(`Player not found in timeline context: ${id}`);
+    return found;
+  };
+  return {
+    ...delivery,
+    batter: player(delivery.batterId),
+    nonStriker: player(delivery.nonStrikerId),
+    bowler: player(delivery.bowlerId),
+    wickets: (delivery.wickets ?? []).map((wicket) => ({
+      ...wicket, playerOut: player(wicket.playerOutId)
+    }))
+  };
+}
+
+/** Restores one innings detector from persisted deliveries without writing events. */
+export function createInningsState({ deliveries, players, isInningsComplete = false }) {
+  const state = createTimelineState();
+  for (const delivery of deliveries) {
+    applyDeliveryToTimelineState(state, deliveryWithPlayers(delivery, players));
+  }
+  if (isInningsComplete) finishTimelineInnings(state);
+  return state;
 }
 
 function desiredEvents(match) {
@@ -123,201 +177,37 @@ export async function synchronizeMatch({ matchId }) {
       where: { matchId },
       include: { innings: { select: { inningsNumber: true } } }
     });
-    const existingByKey = new Map(existing.map((event) => [event.eventKey, event]));
     const desiredKeys = new Set(desired.map((event) => event.eventKey));
-    const changes = { created: [], updated: [], deleted: [] };
-
-    for (const event of desired) {
-      const prior = existingByKey.get(event.eventKey);
-      const data = eventData(matchId, event);
-      if (!prior) {
-        const created = await transaction.timelineEvent.create({ data });
-        changes.created.push(toTimelineEvent(created, event.inningsNumber));
-      } else if (eventChanged(prior, event)) {
-        const updated = await transaction.timelineEvent.update({
-          where: { id: prior.id },
-          data
-        });
-        changes.updated.push(toTimelineEvent(updated, event.inningsNumber));
-      }
+    const obsolete = existing.filter((event) => !desiredKeys.has(event.eventKey));
+    // Free obsolete delivery/order positions before inserting their replacements.
+    for (const event of obsolete) {
+      await transaction.timelineEvent.delete({ where: { id: event.id } });
     }
 
-    for (const event of existing) {
-      if (!desiredKeys.has(event.eventKey)) {
-        await transaction.timelineEvent.delete({ where: { id: event.id } });
-        changes.deleted.push(toTimelineEvent(event));
-      }
-    }
-
+    const changes = await writeEvents(transaction, matchId, desired, existing);
+    changes.deleted = obsolete.map((event) => toTimelineEvent(event));
     return changes;
   });
 }
 
 /**
- * Fast-path: Evaluates and persists timeline events for a single delivery
- * in O(1) time without re-reading all deliveries for the entire match.
- * Falls back to full synchronizeMatch() if this delivery is a correction.
+ * Records a new delivery using its innings state and player lookup, with no history reads.
+ * Apply deliveries once, in order; discard and rebuild state after a SQL failure or correction.
  */
-export async function recordDelivery({ matchId, deliveryId, action = 'created' }) {
-  if (action === 'corrected') {
-    return synchronizeMatch({ matchId });
+export async function recordDelivery({ matchId, delivery, innings, players, state, action = 'created' }) {
+  if (action === 'unchanged') return { created: [], updated: [], deleted: [] };
+  if (action === 'corrected') return synchronizeMatch({ matchId });
+  if (!state) throw new TimelineValidationError('Timeline recording requires an innings state.');
+  if (delivery.inningsId !== innings.id) {
+    throw new TimelineValidationError('Delivery does not belong to the supplied innings.');
   }
+  const events = applyDeliveryToTimelineState(state, deliveryWithPlayers(delivery, players));
+  return recordEvents({ matchId, innings, events });
+}
 
-  const delivery = await prisma.delivery.findUnique({
-    where: { id: deliveryId },
-    include: deliveryInclude
-  });
-
-  if (!delivery) {
-    return { created: [], updated: [], deleted: [] };
-  }
-
-  const events = detectBoundaryAndWicketEvents(delivery);
-
-  if (delivery.batterRuns > 0) {
-    const batterAgg = await prisma.delivery.aggregate({
-      _sum: { batterRuns: true },
-      where: {
-        inningsId: delivery.inningsId,
-        batterId: delivery.batterId,
-        deliverySequence: { lte: delivery.deliverySequence }
-      }
-    });
-    const currentRuns = batterAgg._sum.batterRuns ?? 0;
-    const priorRuns = currentRuns - delivery.batterRuns;
-    events.push(
-      ...detectBatterMilestoneEvents({
-        delivery,
-        previousRuns: priorRuns,
-        updatedRuns: currentRuns
-      })
-    );
-  }
-
-  if (delivery.totalRuns > 0) {
-    const lastWicketDelivery = await prisma.delivery.findFirst({
-      where: {
-        inningsId: delivery.inningsId,
-        deliverySequence: { lt: delivery.deliverySequence },
-        wickets: { some: { countsAsWicket: true } }
-      },
-      orderBy: { deliverySequence: 'desc' },
-      select: { deliverySequence: true }
-    });
-    const sinceSeq = lastWicketDelivery?.deliverySequence ?? 0;
-    const partnerAgg = await prisma.delivery.aggregate({
-      _sum: { totalRuns: true },
-      where: {
-        inningsId: delivery.inningsId,
-        deliverySequence: { gt: sinceSeq, lte: delivery.deliverySequence }
-      }
-    });
-    const currentPartnershipRuns = partnerAgg._sum.totalRuns ?? 0;
-    const priorPartnershipRuns = currentPartnershipRuns - delivery.totalRuns;
-
-    for (const milestone of PARTNERSHIP_MILESTONES) {
-      if (priorPartnershipRuns < milestone && currentPartnershipRuns >= milestone) {
-        const startDelivery = await prisma.delivery.findFirst({
-          where: {
-            inningsId: delivery.inningsId,
-            deliverySequence: { gt: sinceSeq }
-          },
-          orderBy: { deliverySequence: 'asc' },
-          select: { id: true }
-        });
-        const players = [delivery.batter, delivery.nonStriker].sort((left, right) =>
-          left.displayName.localeCompare(right.displayName)
-        );
-      events.push(
-        ...detectPartnershipMilestoneEvents({
-          delivery,
-          previousRuns: priorPartnershipRuns,
-          updatedRuns: currentPartnershipRuns,
-          partnershipStartDeliveryId: startDelivery?.id ?? delivery.id,
-          partnershipPlayers: players,
-          milestones: [milestone]
-        })
-      );
-      }
-    }
-  }
-
-  // 4. Over completion check
-  if (delivery.isLegalDelivery) {
-    const legalCount = await prisma.delivery.count({
-      where: {
-        inningsId: delivery.inningsId,
-        displayOver: delivery.displayOver,
-        isLegalDelivery: true,
-        deliverySequence: { lte: delivery.deliverySequence }
-      }
-    });
-
-    if (legalCount >= 6) {
-      const overDeliveries = await prisma.delivery.findMany({
-        where: {
-          inningsId: delivery.inningsId,
-          displayOver: delivery.displayOver,
-          deliverySequence: { lte: delivery.deliverySequence }
-        },
-        include: deliveryInclude,
-        orderBy: { deliverySequence: 'asc' }
-      });
-
-      const previousOverNumbers = [delivery.displayOver - 2, delivery.displayOver - 1].filter(
-        (n) => n >= 0
-      );
-      const previousGroups = [];
-      for (const overNum of previousOverNumbers) {
-        const prevOver = await prisma.delivery.aggregate({
-          _sum: { totalRuns: true },
-          where: {
-            inningsId: delivery.inningsId,
-            displayOver: overNum
-          }
-        });
-        previousGroups.push({ runs: prevOver._sum.totalRuns ?? 0 });
-      }
-
-      const overResult = eventForCompletedOver(
-        { overNumber: delivery.displayOver, deliveries: overDeliveries },
-        previousGroups
-      );
-      events.push(...overResult.events);
-    }
-  }
-
-  if (events.length === 0) {
-    return { created: [], updated: [], deleted: [] };
-  }
-
-  const innings = await prisma.innings.findUnique({
-    where: { id: delivery.inningsId },
-    select: { inningsNumber: true }
-  });
-
-  const created = [];
-  for (const event of events) {
-    const data = {
-      matchId,
-      inningsId: delivery.inningsId,
-      deliveryId: delivery.id,
-      deliverySequence: delivery.deliverySequence,
-      displayOver: delivery.displayOver,
-      displayBallLabel: delivery.displayBallLabel,
-      occurredAt: delivery.occurredAt,
-      ...event
-    };
-
-    const record = await prisma.timelineEvent.upsert({
-      where: { matchId_eventKey: { matchId, eventKey: data.eventKey } },
-      create: data,
-      update: data
-    });
-    created.push(toTimelineEvent(record, innings?.inningsNumber));
-  }
-
-  return { created, updated: [], deleted: [] };
+/** Persists the remaining over's events when an innings ends. */
+export async function finishInnings({ matchId, innings, state }) {
+  return recordEvents({ matchId, innings, events: finishTimelineInnings(state) });
 }
 
 export async function list({ matchId, inningsNumber, types, limit, cursor }) {

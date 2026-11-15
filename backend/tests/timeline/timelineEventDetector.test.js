@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { detectTimelineEvents } from '../../src/modules/timeline/timelineEventDetector.js';
+import {
+  applyDeliveryToTimelineState,
+  createTimelineState,
+  detectTimelineEvents,
+  finishTimelineInnings
+} from '../../src/modules/timeline/timelineEventDetector.js';
 import { createReplayMatch, replayPlayers, storedDelivery } from '../fixtures/replayMatch.js';
 
 const players = {
@@ -40,6 +45,64 @@ function delivery({
   };
 }
 
+function assertIncrementalDetection(deliveries) {
+  const state = createTimelineState();
+  const events = [];
+  for (let index = 0; index < deliveries.length; index += 1) {
+    events.push(...applyDeliveryToTimelineState(state, deliveries[index]));
+    const prefix = deliveries.slice(0, index + 1);
+    assert.deepEqual(events, detectTimelineEvents({ deliveries: prefix, isInningsComplete: false }),
+      `live prefix ${index + 1}`);
+    assert.deepEqual([...events, ...finishTimelineInnings(structuredClone(state))],
+      detectTimelineEvents({ deliveries: prefix, isInningsComplete: true }),
+      `completed prefix ${index + 1}`);
+  }
+}
+
+test('incremental detection matches full detection after each delivery in both innings', () => {
+  for (const innings of createReplayMatch().innings) {
+    assertIncrementalDetection(innings.deliveries);
+  }
+});
+
+test('an over transition emits the previous over before the new delivery events', () => {
+  const state = createTimelineState();
+  for (let sequence = 1; sequence <= 6; sequence += 1) {
+    assert.deepEqual(applyDeliveryToTimelineState(state, storedDelivery({ deliverySequence: sequence })), []);
+  }
+  const events = applyDeliveryToTimelineState(state, storedDelivery({ deliverySequence: 7, batterRuns: 4 }));
+  assert.deepEqual(events.map((event) => [event.eventKey, event.deliverySequence]), [
+    ['completed-over:innings-1-delivery-6:maiden', 6],
+    ['delivery:innings-1-delivery-7:four', 7]
+  ]);
+});
+
+test('finishing an empty or previously finished innings emits no events', () => {
+  const state = createTimelineState();
+  assert.deepEqual(finishTimelineInnings(state), []);
+  applyDeliveryToTimelineState(state, storedDelivery());
+  applyDeliveryToTimelineState(state, storedDelivery({ deliverySequence: 2 }));
+  assert.deepEqual(finishTimelineInnings(state).map((event) => event.eventKey),
+    ['completed-over:innings-1-delivery-2:maiden']);
+  assert.deepEqual(finishTimelineInnings(state), []);
+});
+
+test('each innings owns independent batter, partnership, and over state', () => {
+  const first = createTimelineState();
+  for (let sequence = 1; sequence <= 8; sequence += 1) {
+    applyDeliveryToTimelineState(first, storedDelivery({ deliverySequence: sequence, batterRuns: 6 }));
+  }
+  const second = createTimelineState();
+  const events = applyDeliveryToTimelineState(second, storedDelivery({ inningsId: 'innings-2', batterRuns: 6 }));
+  assert.deepEqual(events.map((event) => event.eventKey), ['delivery:innings-2-delivery-1:six']);
+  assert.deepEqual(applyDeliveryToTimelineState(first, storedDelivery({ deliverySequence: 9, batterRuns: 6 }))
+    .map((event) => event.eventKey), [
+    'delivery:innings-1-delivery-9:six',
+    'batter-milestone:innings-1:player-a:50',
+    'partnership-milestone:innings-1-delivery-1:50'
+  ]);
+});
+
 test('detects factual delivery events with stable delivery-based keys', () => {
   const events = detectTimelineEvents({
     isInningsComplete: false,
@@ -74,6 +137,7 @@ test('detects player and partnership milestones from accumulated delivery facts'
     storedDelivery({ deliverySequence: index + 1, batterRuns: 6 })
   );
   const events = detectTimelineEvents({ deliveries, isInningsComplete: true });
+  assertIncrementalDetection(deliveries);
 
   assert.deepEqual(
     events.filter((event) => event.type.endsWith('MILESTONE')).map((event) => [
@@ -107,6 +171,7 @@ test('partnerships survive strike swaps, include extras, and reset when a player
   }
 
   const events = detectTimelineEvents({ deliveries, isInningsComplete: false });
+  assertIncrementalDetection(deliveries);
   assert.equal(events.some((event) => event.type === 'WICKET'), false);
   assert.equal(events.some((event) => event.type === 'BATTER_MILESTONE'), false);
   assert.deepEqual(
@@ -163,6 +228,7 @@ test('uses the previous two completed over totals for acceleration and slowdown'
     [6, 6, 6, 0, 0, 0], [0, 0, 0, 0, 0, 0]
   ].flat().map((batterRuns, index) => storedDelivery({ deliverySequence: index + 1, batterRuns }));
   const events = detectTimelineEvents({ deliveries, isInningsComplete: true });
+  assertIncrementalDetection(deliveries);
   assert.deepEqual(
     events.filter((event) => event.type === 'SCORING_RATE_SHIFT').map((event) => [
       event.eventKey, event.description, event.eventOrder, event.importanceScore, event.importanceLevel

@@ -12,11 +12,7 @@ vi.mock('./api.js', () => ({
 const mockAnalysisResponse = {
   kind: 'ANALYSIS',
   tool: 'OVER_ANALYSIS',
-  answer: {
-    headline: 'Tidy Over by Cummins',
-    body: 'Only 3 runs conceded with 4 dot balls.',
-    bullets: []
-  },
+  answer: '### Tidy Over by Cummins\n\nOnly 3 runs conceded with 4 dot balls.',
   evidence: {},
   references: [{ type: 'DELIVERY', ballLabel: '15.4', overNumber: 15 }],
   limitations: []
@@ -25,11 +21,8 @@ const mockAnalysisResponse = {
 const mockRecapResponse = {
   kind: 'RECAP',
   tool: 'LAST_OVER',
-  answer: {
-    headline: 'Over 16 Summary',
-    body: 'India accelerated scoring in this over.',
-    bullets: ['V Kohli hit boundary off ball 2', 'Single on ball 5', 'Dot ball on ball 6']
-  },
+  answer:
+    '### Over 16 Summary\n\nIndia accelerated scoring in this over.\n\n* V Kohli hit boundary off ball 2\n* Single on ball 5\n* Dot ball on ball 6',
   evidence: {},
   references: [{ type: 'DELIVERY', ballLabel: '16.2' }],
   limitations: []
@@ -161,6 +154,37 @@ describe('MatchCompanionChat', () => {
     expect(await screen.findByText('Tidy Over by Cummins')).toBeInTheDocument();
     expect(screen.getByText('Only 3 runs conceded with 4 dot balls.')).toBeInTheDocument();
     expect(screen.getByText('Ov 15.4')).toBeInTheDocument();
+    expect(screen.getByText('Match Analysis')).toBeInTheDocument();
+  });
+
+  it('renders markdown-formatted answers using react-markdown', async () => {
+    queryMatchMock.mockResolvedValue({
+      kind: 'ANALYSIS',
+      tool: 'OVER_ANALYSIS',
+      answer: '### Detailed Over Breakdown\n\n**Jasprit Bumrah** delivered an exceptional spell.\n\n* Conceded only 2 runs\n* Bowled 4 dot balls',
+      evidence: {},
+      references: [{ type: 'DELIVERY', ballLabel: '18.1' }],
+      limitations: []
+    });
+    const user = userEvent.setup();
+
+    render(
+      <MatchCompanionChat
+        defaultOpen
+        apiClient={{}}
+        matchId="match-101"
+        sessionId="session-xyz-123"
+      />
+    );
+
+    const input = screen.getByLabelText('Natural language match question');
+    await user.type(input, 'Detailed breakdown of Bumrah over');
+    await user.click(screen.getByRole('button', { name: 'Send query' }));
+
+    expect(await screen.findByRole('heading', { level: 3, name: 'Detailed Over Breakdown' })).toBeInTheDocument();
+    expect(screen.getByText('Jasprit Bumrah')).toBeInTheDocument();
+    expect(screen.getByText('Conceded only 2 runs')).toBeInTheDocument();
+    expect(screen.getByText('Bowled 4 dot balls')).toBeInTheDocument();
     expect(screen.getByText('Match Analysis')).toBeInTheDocument();
   });
 

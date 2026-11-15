@@ -1,3 +1,5 @@
+import ReactMarkdown from 'react-markdown';
+
 function formatReference(ref) {
   if (!ref) return null;
   if (ref.ballLabel) return `Ov ${ref.ballLabel}`;
@@ -64,20 +66,11 @@ export function ChatMessage({ message }) {
               </span>
             </header>
 
-            {result.answer?.headline && (
-              <h4 className="chat-response-headline">{result.answer.headline}</h4>
-            )}
-
-            {result.answer?.body && (
-              <p className="chat-response-body">{result.answer.body}</p>
-            )}
-
-            {Array.isArray(result.answer?.bullets) && result.answer.bullets.length > 0 && (
-              <ul className="chat-response-bullets">
-                {result.answer.bullets.map((bullet, idx) => (
-                  <li key={idx}>{bullet}</li>
-                ))}
-              </ul>
+            {/* Model narrative: rendered as pure markdown */}
+            {typeof result.answer === 'string' && (
+              <div className="chat-response-markdown">
+                <ReactMarkdown>{result.answer}</ReactMarkdown>
+              </div>
             )}
 
             {/* Factual references separated from model narrative */}

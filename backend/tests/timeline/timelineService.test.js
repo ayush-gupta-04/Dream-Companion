@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
-import { createReplayMatch } from '../fixtures/replayMatch.js';
+import { createReplayMatch, replayPlayers, storedDelivery } from '../fixtures/replayMatch.js';
+import {
+  applyDeliveryToTimelineState,
+  createTimelineState
+} from '../../src/modules/timeline/timelineEventDetector.js';
 
 const prisma = {};
 mock.module('../../src/db/prisma.js', { exports: { prisma } });
@@ -12,66 +16,82 @@ function usePrisma(client) {
   return timelineService;
 }
 
-function createDelivery(batterRuns) {
+function deliveryContext(delivery = storedDelivery({ batterRuns: 4 })) {
   return {
-    id: 'delivery-1',
-    inningsId: 'innings-1',
-    deliverySequence: 1,
-    displayOver: 0,
-    displayBallLabel: '0.1',
-    batterRuns,
-    totalRuns: batterRuns,
-    wides: 0,
-    noBalls: 0,
-    byes: 0,
-    legByes: 0,
-    penaltyRuns: 0,
-    occurredAt: null,
-    batter: { id: 'batter-1', displayName: 'Batter One' },
-    nonStriker: { id: 'partner-1', displayName: 'Partner One' },
-    bowler: { id: 'bowler-1', displayName: 'Bowler One' },
-    wickets: []
+    matchId: 'match-1', delivery,
+    innings: { id: delivery.inningsId, inningsNumber: 1 },
+    players: new Map(Object.values(replayPlayers).map((player) => [player.id, player])),
+    state: createTimelineState()
   };
 }
 
-test('reconciles a corrected delivery by deleting its obsolete timeline event', async () => {
+function useTimelineStore(match) {
   const records = [];
-  const match = {
-    id: 'match-1',
-    status: 'LIVE',
-    innings: [{ id: 'innings-1', inningsNumber: 1, deliveries: [createDelivery(4)] }]
+  const queries = [];
+  const writes = [];
+  let id = 0;
+  const assertFreePosition = (data, ignoredId) => {
+    assert.ok(!records.some((record) => record.id !== ignoredId &&
+      record.inningsId === data.inningsId && record.deliverySequence === data.deliverySequence &&
+      record.eventOrder === data.eventOrder), 'Duplicate timeline delivery/order position');
   };
-  let id = 1;
-  const transaction = {
-    match: { findUnique: async () => match },
+  const client = {
     timelineEvent: {
-      findMany: async () => records.map((record) => ({ ...record, innings: { inningsNumber: 1 } })),
+      findMany: async ({ where }) => {
+        queries.push(where);
+        return records.filter((record) => record.matchId === where.matchId &&
+          (!where.eventKey || where.eventKey.in.includes(record.eventKey)))
+          .map((record) => ({ ...record, innings: { inningsNumber: 1 } }));
+      },
       create: async ({ data }) => {
-        const record = { id: `event-${id++}`, ...data };
+        assertFreePosition(data);
+        const record = { id: `event-${++id}`, ...data };
         records.push(record);
+        writes.push('create');
         return record;
       },
       update: async ({ where, data }) => {
+        assertFreePosition(data, where.id);
         const index = records.findIndex((record) => record.id === where.id);
         records[index] = { ...records[index], ...data };
+        writes.push('update');
         return records[index];
       },
       delete: async ({ where }) => {
+        writes.push('delete');
         const index = records.findIndex((record) => record.id === where.id);
         return records.splice(index, 1)[0];
       }
     }
   };
-  const service = usePrisma({ $transaction: async (operation) => operation(transaction) });
+  if (match) client.match = { findUnique: async () => match };
+  // No delivery, innings, or player delegates: incremental calls must use their context.
+  const transaction = mock.fn(async (operation) => operation(client));
+  const service = usePrisma({ $transaction: transaction });
+  return { service, records, queries, writes, transaction };
+}
+
+test('replaces obsolete event keys before inserting into the same delivery/order position', async () => {
+  const match = {
+    id: 'match-1', status: 'LIVE',
+    innings: [{ id: 'innings-1', inningsNumber: 1, deliveries: [storedDelivery({ batterRuns: 4 })] }]
+  };
+  const { service, records, writes } = useTimelineStore(match);
 
   const created = await service.synchronizeMatch({ matchId: 'match-1' });
-  match.innings[0].deliveries = [createDelivery(0)];
+  match.innings[0].deliveries = [storedDelivery({ batterRuns: 6 })];
+  const replaced = await service.synchronizeMatch({ matchId: 'match-1' });
+  assert.equal(replaced.created[0].type, 'SIX');
+  assert.equal(replaced.deleted[0].id, created.created[0].id);
+  assert.deepEqual(writes, ['create', 'delete', 'create']);
+
+  match.innings[0].deliveries = [storedDelivery()];
   const corrected = await service.synchronizeMatch({ matchId: 'match-1' });
 
   assert.equal(created.created.length, 1);
   assert.equal(created.created[0].type, 'FOUR');
   assert.equal(corrected.deleted.length, 1);
-  assert.equal(corrected.deleted[0].id, created.created[0].id);
+  assert.equal(corrected.deleted[0].id, replaced.created[0].id);
   assert.equal(records.length, 0);
 });
 
@@ -145,129 +165,135 @@ test('starting the next innings finalizes only the previous innings and keeps de
   assert.deepEqual(changes.deleted, []);
 });
 
-test('recordDelivery fast-path creates a FOUR event for a boundary without full match query', async () => {
-  const delivery = createDelivery(4);
-  let upsertedData = null;
-  const prismaMock = {
-    delivery: {
-      findUnique: async () => delivery,
-      aggregate: async () => ({ _sum: { batterRuns: 4, totalRuns: 4 } }),
-      findFirst: async () => null,
-      count: async () => 1
-    },
-    innings: {
-      findUnique: async () => ({ inningsNumber: 1 })
-    },
-    timelineEvent: {
-      upsert: async ({ create }) => {
-        upsertedData = { id: 'event-created-1', ...create };
-        return upsertedData;
-      }
-    }
-  };
+test('recordDelivery uses the supplied delivery and player lookup without historical reads', async () => {
+  const context = deliveryContext();
+  delete context.delivery.batter;
+  delete context.delivery.nonStriker;
+  delete context.delivery.bowler;
+  const { service, records, queries, transaction } = useTimelineStore();
+  const result = await service.recordDelivery(context);
 
-  const service = usePrisma(prismaMock);
-  const result = await service.recordDelivery({
-    matchId: 'match-1',
-    deliveryId: 'delivery-1',
-    action: 'created'
-  });
-
-  assert.equal(result.created.length, 1);
   assert.equal(result.created[0].type, 'FOUR');
-  assert.equal(result.created[0].title, 'Four by Batter One');
-  assert.equal(upsertedData.eventKey, 'delivery:delivery-1:four');
+  assert.equal(result.created[0].title, 'Four by Zara');
+  assert.deepEqual(result.created[0].innings, { id: 'innings-1', number: 1 });
+  assert.equal(records[0].eventKey, 'delivery:innings-1-delivery-1:four');
+  assert.deepEqual(queries, [{ matchId: 'match-1', eventKey: { in: [records[0].eventKey] } }]);
+  assert.equal(transaction.mock.callCount(), 1);
 });
 
 test('recordDelivery keeps milestone event payloads when a delivery crosses both thresholds', async () => {
-  const delivery = createDelivery(1);
-  delivery.totalRuns = 1;
-  const upsertedEvents = [];
-  const prismaMock = {
-    delivery: {
-      findUnique: async () => delivery,
-      aggregate: async ({ _sum }) =>
-        _sum.batterRuns ? { _sum: { batterRuns: 50 } } : { _sum: { totalRuns: 50 } },
-      findFirst: async ({ orderBy }) => (orderBy?.deliverySequence === 'asc' ? { id: 'delivery-0' } : null),
-      count: async () => 0
-    },
-    innings: {
-      findUnique: async () => ({ inningsNumber: 1 })
-    },
-    timelineEvent: {
-      upsert: async ({ create }) => {
-        upsertedEvents.push(create);
-        return { id: `event-${upsertedEvents.length}`, ...create };
-      }
-    }
-  };
-
-  const service = usePrisma(prismaMock);
-  const result = await service.recordDelivery({
-    matchId: 'match-1',
-    deliveryId: 'delivery-1',
-    action: 'created'
-  });
+  const context = deliveryContext(storedDelivery({ deliverySequence: 9, batterRuns: 2 }));
+  for (let sequence = 1; sequence <= 8; sequence += 1) {
+    applyDeliveryToTimelineState(context.state, storedDelivery({ deliverySequence: sequence, batterRuns: 6 }));
+  }
+  const { service, records, queries, transaction } = useTimelineStore();
+  const result = await service.recordDelivery(context);
 
   assert.deepEqual(
     result.created.map((event) => event.type),
     ['BATTER_MILESTONE', 'PARTNERSHIP_MILESTONE']
   );
-  assert.equal(upsertedEvents[0].eventKey, 'batter-milestone:innings-1:batter-1:50');
-  assert.equal(upsertedEvents[1].eventKey, 'partnership-milestone:delivery-0:50');
+  assert.equal(records[0].eventKey, 'batter-milestone:innings-1:player-a:50');
+  assert.equal(records[1].eventKey, 'partnership-milestone:innings-1-delivery-1:50');
   assert.equal(
-    upsertedEvents[1].description,
-    'Batter One and Partner One added 50 runs together at 0.1.'
+    records[1].description,
+    'Zara and Amir added 50 runs together at 1.3.'
   );
+  assert.equal(queries.length, 1);
+  assert.equal(queries[0].eventKey.in.length, 2);
+  assert.equal(transaction.mock.callCount(), 1);
 });
 
-test('recordDelivery fast-path returns empty changes on a dot ball without creating events', async () => {
-  const delivery = createDelivery(0);
-  delivery.isLegalDelivery = true;
-  const prismaMock = {
-    delivery: {
-      findUnique: async () => delivery,
-      aggregate: async () => ({ _sum: { batterRuns: 0, totalRuns: 0 } }),
-      findFirst: async () => null,
-      count: async () => 2
-    },
-    innings: {
-      findUnique: async () => ({ inningsNumber: 1 })
-    },
-    timelineEvent: {
-      upsert: async () => {
-        throw new Error('Should not upsert on dot ball');
-      }
-    }
+test('recordDelivery skips the database when a delivery has no events or is unchanged', async () => {
+  const service = usePrisma({});
+  for (const batterRuns of [0, 1]) {
+    assert.deepEqual(await service.recordDelivery(deliveryContext(storedDelivery({ batterRuns }))),
+      { created: [], updated: [], deleted: [] });
+  }
+  const context = deliveryContext();
+  const before = structuredClone(context.state);
+  assert.deepEqual(await service.recordDelivery({ ...context, action: 'unchanged' }),
+    { created: [], updated: [], deleted: [] });
+  assert.deepEqual(context.state, before);
+});
+
+test('recordDelivery hydrates wicket players from the lookup', async () => {
+  const context = deliveryContext(storedDelivery({ wickets: [{
+    wicketSequence: 1, playerOutId: replayPlayers.partner.id, kind: 'run out', countsAsWicket: true
+  }] }));
+  const { service } = useTimelineStore();
+  const result = await service.recordDelivery(context);
+  assert.equal(result.created[0].title, 'Wicket — Amir');
+  assert.equal(result.created[0].type, 'WICKET');
+});
+
+test('repeated event candidates skip unchanged writes and report real updates with the same ID', async () => {
+  const { service, records, writes } = useTimelineStore();
+  const occurredAt = new Date('2026-01-01T12:00:00Z');
+  const context = () => deliveryContext(storedDelivery({ batterRuns: 4, occurredAt: new Date(occurredAt) }));
+  const created = await service.recordDelivery(context());
+  // A rebuilt context can replay the same durable delivery without publishing it again.
+  assert.deepEqual(await service.recordDelivery(context()), { created: [], updated: [], deleted: [] });
+  assert.deepEqual(writes, ['create']);
+
+  const renamed = context();
+  renamed.players.set(replayPlayers.batter.id, { ...replayPlayers.batter, displayName: 'Zara Revised' });
+  const updated = await service.recordDelivery(renamed);
+  assert.deepEqual(updated.created, []);
+  assert.equal(updated.updated[0].id, created.created[0].id);
+  assert.equal(updated.updated[0].title, 'Four by Zara Revised');
+  assert.deepEqual(writes, ['create', 'update']);
+  assert.equal(records.length, 1);
+});
+
+test('over events retain the previous delivery anchor when the next delivery arrives', async () => {
+  const context = deliveryContext(storedDelivery({ deliverySequence: 7, batterRuns: 4 }));
+  for (let sequence = 1; sequence <= 6; sequence += 1) {
+    applyDeliveryToTimelineState(context.state, storedDelivery({ deliverySequence: sequence }));
+  }
+  const { service, records } = useTimelineStore();
+  const result = await service.recordDelivery(context);
+  assert.deepEqual(result.created.map((event) => [event.type, event.delivery.id]), [
+    ['MAIDEN_OVER', 'innings-1-delivery-6'], ['FOUR', 'innings-1-delivery-7']
+  ]);
+  assert.deepEqual(records.map((event) => event.deliverySequence), [6, 7]);
+});
+
+test('finishInnings persists a partial over once and skips repeated finalization', async () => {
+  const context = deliveryContext(storedDelivery());
+  const { service, transaction } = useTimelineStore();
+  await service.recordDelivery(context);
+  const result = await service.finishInnings(context);
+  assert.equal(result.created[0].type, 'MAIDEN_OVER');
+  assert.deepEqual(await service.finishInnings(context), { created: [], updated: [], deleted: [] });
+  assert.equal(transaction.mock.callCount(), 1);
+});
+
+test('corrections use full reconciliation without advancing the supplied state', async () => {
+  const match = {
+    id: 'match-1', status: 'LIVE',
+    innings: [{ id: 'innings-1', inningsNumber: 1, deliveries: [storedDelivery({ batterRuns: 4 })] }]
   };
-
-  const service = usePrisma(prismaMock);
-  const result = await service.recordDelivery({
-    matchId: 'match-1',
-    deliveryId: 'delivery-1',
-    action: 'created'
-  });
-
-  assert.equal(result.created.length, 0);
-  assert.equal(result.updated.length, 0);
-  assert.equal(result.deleted.length, 0);
+  const { service } = useTimelineStore(match);
+  const created = await service.recordDelivery(deliveryContext());
+  assert.equal(created.created[0].type, 'FOUR');
+  match.innings[0].deliveries = [storedDelivery({ batterRuns: 6 })];
+  const context = deliveryContext();
+  const before = structuredClone(context.state);
+  const corrected = await service.recordDelivery({ ...context, action: 'corrected' });
+  assert.equal(corrected.created[0].type, 'SIX');
+  assert.equal(corrected.deleted[0].id, created.created[0].id);
+  assert.deepEqual(context.state, before);
 });
 
-test('recordDelivery falls back to synchronizeMatch when action is corrected', async () => {
-  let syncCalled = false;
-  const service = usePrisma({
-    $transaction: async () => {
-      syncCalled = true;
-      return { created: [], updated: [{ id: 'updated-1' }], deleted: [] };
-    }
-  });
-
-  const result = await service.recordDelivery({
-    matchId: 'match-1',
-    deliveryId: 'delivery-1',
-    action: 'corrected'
-  });
-
-  assert.equal(syncCalled, true);
-  assert.equal(result.updated.length, 1);
+test('invalid context fails before mutating the detector or querying the database', async () => {
+  const service = usePrisma({});
+  const context = deliveryContext();
+  const before = structuredClone(context.state);
+  await assert.rejects(service.recordDelivery({ ...context, state: undefined }), /requires an innings state/);
+  await assert.rejects(service.recordDelivery({ ...context, innings: { id: 'another-innings' } }),
+    /does not belong/);
+  context.players.delete(replayPlayers.batter.id);
+  await assert.rejects(service.recordDelivery(context), /Player not found in timeline context/);
+  assert.deepEqual(context.state, before);
 });

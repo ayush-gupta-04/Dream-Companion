@@ -29,6 +29,7 @@
   - [5. Second-Screen First User Experience](#5-second-screen-first-user-experience)
   - [6. Enterprise Authentication & Scoped Sessions](#6-enterprise-authentication--scoped-sessions)
 - [System Architecture & Data Flow](#-system-architecture--data-flow)
+  - [Replay State and Event Processing](#replay-state-and-event-processing)
 - [Design Decisions & Scope Boundaries](#-design-decisions--scope-boundaries)
 - [Technology Stack](#-technology-stack)
 - [Project Directory Structure](#-project-directory-structure)
@@ -141,6 +142,7 @@ To provide a production-grade live match experience without requiring costly com
 - **Simulated-Live Streaming Engine**: Dedicated simulation manager replays delivery streams at configurable intervals (e.g., 1 delivery/sec) into the delivery processor.
 - **Multi-Client Room Synchronization**: Concurrent viewers connecting to the designated live match attach to the same running replay room rather than spawning redundant simulations.
 - **Idempotent Delivery Processing**: Unique `(inningsId, deliverySequence)` constraints and payload fingerprinting guarantee that replayed deliveries never corrupt or duplicate match statistics.
+- **Incremental Match State**: Replay keeps score and timeline accumulators in memory and publishes scorecard snapshots to Redis, avoiding a full database scorecard rebuild after each delivery.
 
 ### 5. Second-Screen First User Experience
 - **Responsive Workspace**: Built from the ground up for seamless usage on desktop, tablet, and mobile browsers.
@@ -190,8 +192,8 @@ To provide a production-grade live match experience without requiring costly com
 │                   ▼                                 ▼                   │
 │   ┌─────────────────────────────────────────────────────────────────┐   │
 │   │ STORAGE & CACHING                                               │   │
-│   │  • PostgreSQL + Prisma: Authoritative Delivery & Match History  │   │
-│   │  • Redis: Sub-millisecond Live Match State & Hot Delivery Cache │   │
+│   │  • PostgreSQL + Prisma: Durable Deliveries & Timeline Events    │   │
+│   │  • Redis: Public Scorecard Snapshots for Readers               │   │
 │   └────────────────────────────────┬────────────────────────────────┘   │
 │                                    │                                    │
 │                                    ▼                                    │
@@ -225,6 +227,12 @@ To provide a production-grade live match experience without requiring costly com
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Replay State and Event Processing
+
+- **Main server:** Keeps the active match's score and timeline state in memory, detects events, and broadcasts deliveries, scores, and timeline updates over Socket.IO. In this prototype, the same server also handles API requests.
+- **Redis scorecard snapshot:** Holds the public scorecard for readers, allowing API servers to share the latest snapshot without rebuilding it for every request.
+- **SQL persistence:** PostgreSQL stores complete match data, including innings, deliveries, wickets, and timeline events. These durable facts rebuild the in-memory state at startup or after corrections and unexpected delivery sequences.
+
 ---
 
 ## 🎯 Design Decisions & Scope Boundaries
@@ -250,7 +258,7 @@ The companion workspace includes a dedicated non-playing video shell placeholder
 | **Backend Runtime** | Node.js (ES Modules) | `>= 20.0.0` | Asynchronous, event-driven server runtime |
 | **Web Framework** | Express.js | `^4.21.2` | RESTful API routing, middleware, controllers |
 | **Database & ORM** | PostgreSQL + Prisma ORM | `v16` / `^6.5.0` | Authoritative relational match/delivery persistence |
-| **Cache & Live State** | Redis | `v7-alpine` | High-throughput match snapshots and hot caching |
+| **Scorecard Cache** | Redis | `v7-alpine` | Public match snapshots for API readers |
 | **Realtime Messaging** | Socket.IO | `^4.8.1` | Bidirectional WebSocket delivery and timeline push |
 | **AI Intelligence** | Google Gemini API | Gemini Flash | Intent extraction & evidence-grounded explanations |
 | **Authentication** | Clerk | `^3.29.0` (BE) / `^6.18.8` (FE) | User identity, JWT verification, session management |
@@ -334,6 +342,9 @@ src/server.js → src/app.js → routes → controllers → modules → Prisma
 - `src/modules/` contains feature-specific business logic; `src/db/prisma.js` provides the shared database client.
 - Modules import the shared Prisma, Redis, and Socket.IO instances and direct AI functions. The server owns connection startup and shutdown.
 - Delivery repository functions accept a Prisma transaction client when a multi-step write must stay atomic.
+- `src/replay/replayService.js` owns the replay context, sequence checks, recovery, and publication order.
+- `src/modules/match-intelligence/state/matchStateAccumulator.js` advances scores and creates public snapshots; `matchStateService.js` loads facts for startup, recovery, and API cache misses.
+- `src/modules/timeline/timelineEventDetector.js` shares incremental rules with full detection; `timelineService.js` persists changes and reconciles corrected facts.
 
 For local backend development:
 
@@ -345,7 +356,7 @@ npm run db:deploy
 npm run dev
 ```
 
-Useful checks are `npm run lint`, `npm test`, and `npm run test:db` (the last requires local PostgreSQL and Redis).
+Useful checks are `npm run lint`, `npm test`, and `npm run test:db`. For SQL integration checks, set `RUN_DATABASE_TESTS=true` and configure a migrated test database plus Redis.
 
 ---
 
@@ -566,9 +577,10 @@ Clients authenticate their WebSocket connection using their Clerk session token 
 | Event Name | Direction | Payload Description |
 | :--- | :--- | :--- |
 | `join_match` | Client ➔ Server | `{ "matchId": "1001349" }` — Join the live broadcast room |
-| `score_updated` | Server ➔ Client | Incremental scoreboard update (score, wickets, overs, run rate) |
+| `score_updated` | Server ➔ Client | Public scorecard snapshot produced from the current in-memory state |
 | `delivery_added` | Server ➔ Client | Newly delivered ball with runs, batter, bowler, extras details |
-| `match_status_updated`| Server ➔ Client | State transition (`IN_PROGRESS`, `COMPLETED`, innings change) |
+| `delivery_corrected` | Server ➔ Client | Revised delivery, followed by the rebuilt scorecard snapshot |
+| `match_status_updated`| Server ➔ Client | Match status transition, such as `LIVE` or `COMPLETE` |
 | `timeline_event_created`| Server ➔ Client | New rule-detected highlight card (boundary, wicket, milestone) |
 | `timeline_event_updated`| Server ➔ Client | Reconciliation update following provider score corrections |
 | `timeline_event_deleted`| Server ➔ Client | Removal of an event card if underlying deliveries were revised |
@@ -586,9 +598,16 @@ cd backend
 # Run domain unit tests, schema validation, and mock AI orchestrator tests:
 npm run test
 
-# Run integration tests against active PostgreSQL and Redis instances:
+# Configure DATABASE_URL in backend/.env for a migrated test database, with Redis running:
+$env:RUN_DATABASE_TESTS = "true"
 npm run test:db
+Remove-Item Env:RUN_DATABASE_TESTS
 ```
+
+Replay tests verify that normal deliveries do not rebuild scorecards or read
+delivery history for detection. They also cover corrections, sequence gaps,
+innings completion, cancellation, and SQL/Redis failures. Live SQL checks cover
+event deduplication, replacement, and transaction rollback.
 
 ### Frontend Verification:
 ```powershell

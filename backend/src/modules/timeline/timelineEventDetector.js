@@ -32,31 +32,11 @@ function pairFor(delivery) {
   );
 }
 
-function groupsByOver(deliveries) {
-  const groups = [];
-  for (const delivery of deliveries) {
-    const group = groups.at(-1);
-    if (!group || group.overNumber !== delivery.displayOver) {
-      groups.push({ overNumber: delivery.displayOver, deliveries: [delivery] });
-    } else {
-      group.deliveries.push(delivery);
-    }
-  }
-  return groups;
+function bowlerConceded(delivery) {
+  return delivery.totalRuns - delivery.byes - delivery.legByes - delivery.penaltyRuns;
 }
 
-function bowlerConceded(deliveries) {
-  return deliveries.reduce(
-    (total, delivery) =>
-      total + delivery.totalRuns - delivery.byes - delivery.legByes - delivery.penaltyRuns,
-    0
-  );
-}
-
-export function eventForCompletedOver(group, completedGroups) {
-  const anchor = group.deliveries.at(-1);
-  const runs = group.deliveries.reduce((total, delivery) => total + delivery.totalRuns, 0);
-  const conceded = bowlerConceded(group.deliveries);
+function completedOverEvents({ overNumber, anchor, runs, conceded }, completedGroups) {
   const bowler = anchor.bowler.displayName;
   const events = [];
 
@@ -67,7 +47,7 @@ export function eventForCompletedOver(group, completedGroups) {
         eventOrder: 60,
         type: 'MAIDEN_OVER',
         title: `Maiden over by ${bowler}`,
-        description: `${bowler} conceded no runs in over ${group.overNumber}.`,
+        description: `${bowler} conceded no runs in over ${overNumber}.`,
         ...importance(60, 'HIGHLIGHT')
       })
     );
@@ -81,7 +61,7 @@ export function eventForCompletedOver(group, completedGroups) {
         eventOrder: 70,
         type: 'EXPENSIVE_OVER',
         title: `${conceded}-run over against ${bowler}`,
-        description: `${bowler} conceded ${conceded} runs in over ${group.overNumber}.`,
+        description: `${bowler} conceded ${conceded} runs in over ${overNumber}.`,
         ...importance(score, conceded >= 20 ? 'MAJOR' : 'HIGHLIGHT')
       })
     );
@@ -100,8 +80,8 @@ export function eventForCompletedOver(group, completedGroups) {
           eventKey: `completed-over:${anchor.id}:acceleration`,
           eventOrder: 80,
           type: 'SCORING_RATE_SHIFT',
-          title: `Scoring rate surged in over ${group.overNumber}`,
-          description: `${runs} runs came from over ${group.overNumber}, after an average of ${baseline.toFixed(1)} across the previous ${previous.length} overs.`,
+          title: `Scoring rate surged in over ${overNumber}`,
+          description: `${runs} runs came from over ${overNumber}, after an average of ${baseline.toFixed(1)} across the previous ${previous.length} overs.`,
           ...importance(65, 'HIGHLIGHT')
         })
       );
@@ -115,20 +95,19 @@ export function eventForCompletedOver(group, completedGroups) {
           eventKey: `completed-over:${anchor.id}:slowdown`,
           eventOrder: 80,
           type: 'SCORING_RATE_SHIFT',
-          title: `Scoring rate slowed in over ${group.overNumber}`,
-          description: `Only ${runs} runs came from over ${group.overNumber}, after an average of ${baseline.toFixed(1)} across the previous ${previous.length} overs.`,
+          title: `Scoring rate slowed in over ${overNumber}`,
+          description: `Only ${runs} runs came from over ${overNumber}, after an average of ${baseline.toFixed(1)} across the previous ${previous.length} overs.`,
           ...importance(65, 'HIGHLIGHT')
         })
       );
     }
   }
 
-  return { events, runs };
+  return events;
 }
 
 /**
- * Detects events that occur on a single delivery (boundaries, wickets,
- * and batter/partnership milestones). Pure function shared by full sync and fast path.
+ * Detects boundaries and wickets without accumulated innings state.
  */
 export function detectBoundaryAndWicketEvents(delivery) {
   const events = [];
@@ -253,58 +232,74 @@ export function detectSingleDeliveryEvents({
   ];
 }
 
+/** Creates independent detector state for one innings; no delivery history is retained. */
+export function createTimelineState() {
+  return { batterRuns: new Map(), partnership: null, currentOver: null, previousOvers: [] };
+}
+
+function completeOver(state) {
+  const over = state.currentOver;
+  if (!over) return [];
+  const events = completedOverEvents(over, state.previousOvers);
+  state.previousOvers.push({ runs: over.runs });
+  if (state.previousOvers.length > SCORING_RATE_WINDOW_OVERS) state.previousOvers.shift();
+  state.currentOver = null;
+  return events;
+}
+
 /**
- * Produces notable events from one ordered innings. It uses stable delivery
- * sequence for chronology and never treats a display label as an identifier.
+ * Mutates one innings state using the next ordered delivery and returns new events.
+ * Prior deliveries must be applied exactly once; corrections require rebuilding state.
  */
+export function applyDeliveryToTimelineState(state, delivery) {
+  const events = state.currentOver && state.currentOver.overNumber !== delivery.displayOver
+    ? completeOver(state) : [];
+  const over = state.currentOver ??= {
+    overNumber: delivery.displayOver, anchor: null, runs: 0, conceded: 0
+  };
+  over.anchor = delivery;
+  over.runs += delivery.totalRuns;
+  over.conceded += bowlerConceded(delivery);
+
+  const previousBatterRuns = state.batterRuns.get(delivery.batter.id) ?? 0;
+  const updatedBatterRuns = previousBatterRuns + delivery.batterRuns;
+  state.batterRuns.set(delivery.batter.id, updatedBatterRuns);
+
+  const pair = pairFor(delivery);
+  const pairKey = pair.map((player) => player.id).join(':');
+  if (!state.partnership || state.partnership.key !== pairKey) {
+    state.partnership = {
+      key: pairKey, startDeliveryId: delivery.id, players: pair, runs: 0
+    };
+  }
+  const previousPartnershipRuns = state.partnership.runs;
+  state.partnership.runs += delivery.totalRuns;
+
+  const deliveryEvents = detectSingleDeliveryEvents({
+    delivery,
+    previousBatterRuns,
+    updatedBatterRuns,
+    previousPartnershipRuns,
+    updatedPartnershipRuns: state.partnership.runs,
+    partnershipStartDeliveryId: state.partnership.startDeliveryId,
+    partnershipPlayers: state.partnership.players
+  });
+  events.push(...deliveryEvents.sort((left, right) => left.eventOrder - right.eventOrder));
+  return events;
+}
+
+/** Emits the pending over's events once, including an innings ending mid-over. */
+export function finishTimelineInnings(state) {
+  return completeOver(state);
+}
+
+/** Detects events from one ordered innings using the same state as incremental detection. */
 export function detectTimelineEvents({ deliveries, isInningsComplete }) {
+  const state = createTimelineState();
   const events = [];
-  const batterRuns = new Map();
-  let activePartnership = null;
-
   for (const delivery of deliveries) {
-    const previousBatterRuns = batterRuns.get(delivery.batter.id) ?? 0;
-    const updatedBatterRuns = previousBatterRuns + delivery.batterRuns;
-    batterRuns.set(delivery.batter.id, updatedBatterRuns);
-
-    const pair = pairFor(delivery);
-    const pairKey = pair.map((player) => player.id).join(':');
-    if (!activePartnership || activePartnership.key !== pairKey) {
-      activePartnership = {
-        key: pairKey,
-        startDeliveryId: delivery.id,
-        players: pair,
-        runs: 0
-      };
-    }
-    const previousPartnershipRuns = activePartnership.runs;
-    activePartnership.runs += delivery.totalRuns;
-
-    events.push(
-      ...detectSingleDeliveryEvents({
-        delivery,
-        previousBatterRuns,
-        updatedBatterRuns,
-        previousPartnershipRuns,
-        updatedPartnershipRuns: activePartnership.runs,
-        partnershipStartDeliveryId: activePartnership.startDeliveryId,
-        partnershipPlayers: activePartnership.players
-      })
-    );
+    events.push(...applyDeliveryToTimelineState(state, delivery));
   }
-
-  const completedGroups = [];
-  const groups = groupsByOver(deliveries);
-  for (const [index, group] of groups.entries()) {
-    const isComplete = index < groups.length - 1 || isInningsComplete;
-    if (!isComplete) continue;
-    const completed = eventForCompletedOver(group, completedGroups);
-    events.push(...completed.events);
-    completedGroups.push({ runs: completed.runs });
-  }
-
-  return events.sort(
-    (left, right) =>
-      left.deliverySequence - right.deliverySequence || left.eventOrder - right.eventOrder
-  );
+  if (isInningsComplete) events.push(...finishTimelineInnings(state));
+  return events;
 }
