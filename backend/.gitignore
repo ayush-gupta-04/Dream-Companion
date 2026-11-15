@@ -16,7 +16,6 @@ coverage/
 # Database / local volumes
 postgres_data/
 redis_data/
-t20s_male_json/
 
 # IDE and OS
 .DS_Store
