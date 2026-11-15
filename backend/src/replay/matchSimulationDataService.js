@@ -1,8 +1,11 @@
+import { prisma } from '../db/prisma.js';
+import * as stateCache from '../modules/match-intelligence/state/matchStateCache.js';
+
 /**
  * Removes only data that is derived from a match's deliveries. Match metadata,
  * teams, players, and innings remain available for the next replay.
  */
-export async function clearMatchSimulationData({ prisma, stateCache, matchId, status }) {
+export async function clearMatchSimulationData({ matchId, status }) {
   await prisma.$transaction(async (transaction) => {
     const innings = await transaction.innings.findMany({
       where: { matchId },
@@ -21,7 +24,5 @@ export async function clearMatchSimulationData({ prisma, stateCache, matchId, st
     await transaction.match.update({ where: { id: matchId }, data: { status } });
   });
 
-  if (stateCache && typeof stateCache.clear === 'function') {
-    await stateCache.clear(matchId);
-  }
+  await stateCache.clear(matchId);
 }

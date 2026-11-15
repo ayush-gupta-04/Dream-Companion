@@ -5,8 +5,92 @@ import { reconstructInningsState } from '../../src/modules/match-intelligence/do
 import {
   createDelivery,
   deliveryRecordToNormalizedDelivery,
-  listInningsDeliveries
+  listInningsDeliveries,
+  updateDelivery
 } from '../../src/modules/match-intelligence/persistence/deliveryRepository.js';
+
+test('createDelivery and updateDelivery preserve their delivery and wicket mappings', async () => {
+  const calls = [];
+  const prisma = {
+    delivery: {
+      create: async (args) => {
+        calls.push({ operation: 'create', args });
+        return args;
+      },
+      update: async (args) => {
+        calls.push({ operation: 'update', args });
+        return args;
+      }
+    }
+  };
+  const delivery = normalizedDelivery({
+    runs: { batter: 4, total: 6 },
+    extras: { noBalls: 1, byes: 1 },
+    wickets: [
+      {
+        playerOutId: 'player-out',
+        kind: 'run out',
+        countsAsWicket: true,
+        fielders: ['fielder-1']
+      }
+    ],
+    source: { provider: 'source', deliveryId: 'source-delivery', revision: 'revision-1' },
+    rawPayload: { provider: 'source' }
+  });
+
+  await createDelivery(prisma, { inningsId: 'innings-1', delivery });
+  await updateDelivery(prisma, 'delivery-1', delivery);
+
+  const [createCall, updateCall] = calls;
+  assert.deepEqual(createCall.args.data, {
+    inningsId: 'innings-1',
+    deliverySequence: 1,
+    sourceDeliveryId: 'source-delivery',
+    sourceRevision: 'revision-1',
+    displayOver: 0,
+    displayBallLabel: '0.1',
+    batterId: 'player-batter',
+    nonStrikerId: 'player-non-striker',
+    bowlerId: 'player-bowler',
+    batterRuns: 4,
+    totalExtras: 2,
+    totalRuns: 6,
+    wides: 0,
+    noBalls: 1,
+    byes: 1,
+    legByes: 0,
+    penaltyRuns: 0,
+    isLegalDelivery: false,
+    occurredAt: undefined,
+    rawPayload: { provider: 'source' },
+    wickets: {
+      create: [
+        {
+          wicketSequence: 1,
+          playerOutId: 'player-out',
+          kind: 'run out',
+          countsAsWicket: true,
+          fielders: ['fielder-1']
+        }
+      ]
+    }
+  });
+  const updateDeliveryData = { ...createCall.args.data };
+  delete updateDeliveryData.inningsId;
+  delete updateDeliveryData.deliverySequence;
+  delete updateDeliveryData.sourceDeliveryId;
+  assert.deepEqual(updateCall.args, {
+    where: { id: 'delivery-1' },
+    data: {
+      ...updateDeliveryData,
+      wickets: {
+        deleteMany: {},
+        create: createCall.args.data.wickets.create
+      }
+    },
+    include: { wickets: true }
+  });
+});
 
 test('deliveryRecordToNormalizedDelivery maps database records to normalized domain objects', () => {
   const dbRecord = {

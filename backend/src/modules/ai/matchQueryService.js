@@ -1,6 +1,11 @@
+import { config } from '../../config/index.js';
+import { prisma } from '../../db/prisma.js';
 import { analysisToolTypes, matchQueryToolSchema } from '../../schemas/matchQuerySchemas.js';
 import { recapWindowTypes } from '../../schemas/recapSchemas.js';
+import { executeRecap } from '../summaries/recapService.js';
+import { executeAnalysis } from './askMatchService.js';
 import { AiUnavailableError } from './geminiClient.js';
+import { selectTool } from './geminiMatchQueryClient.js';
 
 export class MatchQueryNotFoundError extends Error {
   constructor(message) {
@@ -58,7 +63,7 @@ function recapResult(result) {
   };
 }
 
-async function requireMatch(prisma, matchId) {
+async function requireMatch(matchId) {
   const match = await prisma.match.findUnique({
     where: { id: matchId },
     select: { id: true, status: true }
@@ -67,42 +72,33 @@ async function requireMatch(prisma, matchId) {
   return match;
 }
 
+export async function queryMatch({ matchId, request, viewer }) {
+  if (!config.gemini.apiKey) throw new AiUnavailableError();
 
+  const match = await requireMatch(matchId);
+  const players = await prisma.player.findMany({
+    where: { matchAppearances: { some: { matchId } } },
+    select: { id: true, displayName: true },
+    orderBy: { displayName: 'asc' }
+  });
 
-// Main method
-// This is the entry point of the Query Request.
-export function createMatchQueryService({ prisma, aiClient, analysisService, recapService }) {
-  return {
-    async query({ matchId, request, viewer }) {
-      if (!aiClient) throw new AiUnavailableError();
+  const tool = matchQueryToolSchema.parse(
+    await selectTool({
+      query: request.query,
+      players,
+      sessionIdProvided: Boolean(request.sessionId)
+    })
+  );
 
-      const match = await requireMatch(prisma, matchId);
-      const players = await prisma.player.findMany({
-        where: { matchAppearances: { some: { matchId } } },
-        select: { id: true, displayName: true },
-        orderBy: { displayName: 'asc' }
-      });
+  if (tool.tool === 'UNSUPPORTED') return unsupportedResult();
 
-      // It will select the tool from the query.
-      const tool = matchQueryToolSchema.parse(
-        await aiClient.selectTool({
-          query: request.query,
-          players,
-          sessionIdProvided: Boolean(request.sessionId)
-        })
-      );
+  if (analysisToolTypes.includes(tool.tool)) {
+    return analysisResult(await executeAnalysis({ matchId, query: request.query, tool }));
+  }
 
-      if (tool.tool === 'UNSUPPORTED') return unsupportedResult();
+  if (recapWindowTypes.includes(tool.tool)) {
+    return recapResult(await executeRecap({ matchId, match, request, tool, viewer }));
+  }
 
-      if (analysisToolTypes.includes(tool.tool)) {
-        return analysisResult(await analysisService.execute({ matchId, query: request.query, tool }));
-      }
-
-      if (recapWindowTypes.includes(tool.tool)) {
-        return recapResult(await recapService.execute({ matchId, match, request, tool, viewer }));
-      }
-
-      return unsupportedResult();
-    }
-  };
+  return unsupportedResult();
 }

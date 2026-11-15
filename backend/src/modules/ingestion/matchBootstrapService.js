@@ -1,16 +1,16 @@
 import { CricsheetAdapterError } from './cricsheetAdapter.js';
+import { prisma } from '../../db/prisma.js';
 
 function mapBySourceId(records) {
   return new Map(records.map((record) => [record.sourceId, record]));
 }
-
 
 // Runs inside a PostgreSQL transaction (prisma.$transaction).
 // Upserts Match, Team, Player, MatchTeam, MatchPlayer, and Innings rows.
 // Replaces external Cricsheet person/team registry IDs with internal database CUIDs/UUIDs so
 //    subsequent delivery processing works solely with internal foreign keys.
 
-export async function bootstrapCricsheetMatch(prisma, adaptedMatch) {
+export async function bootstrapCricsheetMatch(adaptedMatch) {
   return prisma.$transaction(async (transaction) => {
     const matchData = {
       name: adaptedMatch.name,

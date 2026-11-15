@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createTimelineService } from '../../src/modules/timeline/timelineService.js';
+import * as timelineService from '../../src/modules/timeline/timelineService.js';
 
 test(
   'persists each derived event once and removes it after a corrected delivery',
@@ -35,7 +35,7 @@ test(
         isLegalDelivery: true
       }
     });
-    const service = createTimelineService({ prisma });
+    const service = timelineService;
 
     try {
       const first = await service.synchronizeMatch({ matchId: match.id });

@@ -7,8 +7,9 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --import ./tests/testSetup.js --test tests/**/*.test.js",
-    "test:db": "node --env-file=.env --import ./tests/testSetup.js --test tests/**/*.test.js",
+    "lint": "eslint .",
+    "test": "node --experimental-test-module-mocks --import ./tests/testSetup.js --test tests/**/*.test.js",
+    "test:db": "node --experimental-test-module-mocks --env-file=.env --import ./tests/testSetup.js --test tests/**/*.test.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
@@ -26,6 +27,9 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.15.0",
+    "globals": "^17.14.0",
     "prisma": "^6.5.0",
     "socket.io-client": "^4.8.1",
     "supertest": "^7.0.0"

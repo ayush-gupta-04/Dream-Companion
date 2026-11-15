@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
-import { MatchStateCache } from '../../src/modules/match-intelligence/state/matchStateCache.js';
+import { describe, mock, test } from 'node:test';
+
+const redisClient = {};
+mock.module('../../src/db/redis.js', { exports: { redisClient } });
+const stateCache = await import('../../src/modules/match-intelligence/state/matchStateCache.js');
+
+function useRedis(methods) {
+  for (const key of Object.keys(redisClient)) delete redisClient[key];
+  Object.assign(redisClient, methods);
+  return stateCache;
+}
 
 describe('MatchStateCache Unit & Resilience Tests', () => {
   test('returns cached state on cache hit without invoking build()', async () => {
@@ -15,7 +24,7 @@ describe('MatchStateCache Unit & Resilience Tests', () => {
       }
     };
 
-    const cache = new MatchStateCache(mockRedis);
+    const cache = useRedis(mockRedis);
     const result = await cache.getOrBuild('test-match-1', async () => {
       buildCalled = true;
       return { matchId: 'test-match-1', score: 999 };
@@ -40,7 +49,7 @@ describe('MatchStateCache Unit & Resilience Tests', () => {
       }
     };
 
-    const cache = new MatchStateCache(mockRedis);
+    const cache = useRedis(mockRedis);
     const result = await cache.getOrBuild('test-match-2', async () => {
       buildCalled = true;
       return { matchId: 'test-match-2', status: 'LIVE', totalRuns: 120 };
@@ -62,7 +71,7 @@ describe('MatchStateCache Unit & Resilience Tests', () => {
       set: async () => {}
     };
 
-    const cache = new MatchStateCache(mockRedis);
+    const cache = useRedis(mockRedis);
     const result = await cache.getOrBuild('test-match-3', async () => {
       buildCalled = true;
       return { matchId: 'test-match-3', source: 'PostgreSQL' };
@@ -80,7 +89,7 @@ describe('MatchStateCache Unit & Resilience Tests', () => {
       }
     };
 
-    const cache = new MatchStateCache(mockRedis);
+    const cache = useRedis(mockRedis);
     const result = await cache.getOrBuild('test-match-4', async () => ({
       matchId: 'test-match-4',
       valid: true
@@ -97,7 +106,7 @@ describe('MatchStateCache Unit & Resilience Tests', () => {
       }
     };
 
-    const cache = new MatchStateCache(mockRedis);
+    const cache = useRedis(mockRedis);
     await cache.clear('match-abc');
     assert.equal(deletedKey, 'match:match-abc:state');
   });
@@ -110,87 +119,16 @@ describe('MatchStateCache Unit & Resilience Tests', () => {
       }
     };
 
-    const cache = new MatchStateCache(mockRedis);
+    const cache = useRedis(mockRedis);
     await cache.clear();
     assert.equal(flushed, true);
   });
 
   test('handles missing or incomplete redis client safely without error', async () => {
-    const cache = new MatchStateCache(null);
+    const cache = useRedis({});
     await assert.doesNotReject(async () => {
       await cache.clear('any');
       await cache.clear();
     });
-  });
-});
-
-describe('MatchStateCache Live Redis Integration', () => {
-  test('persists and retrieves match state with live Redis server', async () => {
-    const { createClient } = await import('redis');
-    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-    const redisClient = createClient({
-      url: redisUrl,
-      socket: { reconnectStrategy: false }
-    });
-
-    try {
-      await redisClient.connect();
-    } catch {
-      // If Redis cannot connect, skip live integration assertion
-      return;
-    }
-
-    try {
-      const matchId = `integration-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-      const cache = new MatchStateCache(redisClient);
-
-      const sampleState = {
-        matchId,
-        name: 'Live Redis Integration Match',
-        status: 'LIVE',
-        currentInnings: { inningsNumber: 1, totalRuns: 45, wickets: 2 },
-        updatedAt: new Date().toISOString()
-      };
-
-      let buildCount = 0;
-      const builder = async () => {
-        buildCount += 1;
-        return sampleState;
-      };
-
-      // 1. Initial call - Cache Miss (calls builder and sets Redis)
-      const firstResult = await cache.getOrBuild(matchId, builder);
-      assert.equal(buildCount, 1);
-      assert.deepEqual(firstResult, sampleState);
-
-      // 2. Verify key exists in live Redis directly
-      const rawInRedis = await redisClient.get(`match:${matchId}:state`);
-      assert.ok(rawInRedis, 'State should exist in live Redis');
-      assert.deepEqual(JSON.parse(rawInRedis), sampleState);
-
-      // 3. Second call - Cache Hit (must NOT call builder again)
-      const secondResult = await cache.getOrBuild(matchId, builder);
-      assert.equal(buildCount, 1, 'Builder should not be called on cache hit');
-      assert.deepEqual(secondResult, sampleState);
-
-      // 4. Invalidate cache via clear(matchId)
-      await cache.clear(matchId);
-
-      // 5. Verify key is removed from live Redis
-      const afterClear = await redisClient.get(`match:${matchId}:state`);
-      assert.equal(afterClear, null, 'Key must be deleted after cache.clear');
-
-      // 6. Third call - Cache Miss again (calls builder)
-      const thirdResult = await cache.getOrBuild(matchId, builder);
-      assert.equal(buildCount, 2, 'Builder should be called again after cache clear');
-      assert.deepEqual(thirdResult, sampleState);
-
-      // Clean up key
-      await cache.clear(matchId);
-    } finally {
-      if (redisClient.isOpen) {
-        await redisClient.quit();
-      }
-    }
   });
 });

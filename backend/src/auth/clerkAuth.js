@@ -1,76 +1,42 @@
 import { verifyToken } from '@clerk/backend';
 import { clerkMiddleware, getAuth } from '@clerk/express';
+import { config } from '../config/index.js';
 
-function unauthorized(res) {
-  res.status(401).json({ status: 'error', message: 'Authentication is required.' });
-}
+const testViewer = { userId: 'user_test', sessionId: 'sess_test' };
 
-function unavailable(res) {
-  res.status(503).json({ status: 'error', message: 'Authentication is not configured.' });
-}
+export const initializeAuth =
+  config.nodeEnv !== 'test' && config.clerk.secretKey
+    ? clerkMiddleware({
+        publishableKey: config.clerk.publishableKey,
+        secretKey: config.clerk.secretKey,
+        authorizedParties: config.clerk.authorizedParties
+      })
+    : (_req, _res, next) => next();
 
-function assignViewer(req, { userId, sessionId = null }) {
+export function requireAuthenticated(req, res, next) {
+  if (config.nodeEnv === 'test') {
+    req.viewer = testViewer;
+    return next();
+  }
+  if (!config.clerk.secretKey) {
+    return res.status(503).json({ status: 'error', message: 'Authentication is not configured.' });
+  }
+  const { isAuthenticated, userId, sessionId } = getAuth(req);
+  if (!isAuthenticated || !userId) {
+    return res.status(401).json({ status: 'error', message: 'Authentication is required.' });
+  }
   req.viewer = { userId, sessionId };
+  next();
 }
 
-function configuredSocketAuthenticator(clerk) {
-  if (!clerk.secretKey) {
-    return async () => {
-      throw new Error('Authentication is not configured.');
-    };
-  }
-
-  return async (token) => {
-    if (!token || typeof token !== 'string') throw new Error('Authentication is required.');
-    const claims = await verifyToken(token, {
-      secretKey: clerk.secretKey,
-      authorizedParties: clerk.authorizedParties
-    });
-    if (!claims?.sub) throw new Error('Authentication is required.');
-    return { userId: claims.sub, sessionId: claims.sid ?? null };
-  };
-}
-
-export function createTestAuth({ userId = 'user_test', sessionId = 'sess_test' } = {}) {
-  const viewer = { userId, sessionId };
-
-  return {
-    initialize: (req, res, next) => next(),
-    requireAuthenticated: (req, res, next) => {
-      assignViewer(req, viewer);
-      next();
-    },
-    authenticateSocket: async () => viewer
-  };
-}
-
-export function createClerkAuth({ clerk, nodeEnv }) {
-  if (nodeEnv === 'test') return createTestAuth();
-
-  if (!clerk.secretKey) {
-    return {
-      initialize: (req, res, next) => next(),
-      requireAuthenticated: (req, res) => unavailable(res),
-      authenticateSocket: configuredSocketAuthenticator(clerk)
-    };
-  }
-
-  const initialize = clerkMiddleware({
-    publishableKey: clerk.publishableKey,
-    secretKey: clerk.secretKey,
-    authorizedParties: clerk.authorizedParties
+export async function authenticateSocket(token) {
+  if (config.nodeEnv === 'test') return testViewer;
+  if (!config.clerk.secretKey) throw new Error('Authentication is not configured.');
+  if (!token || typeof token !== 'string') throw new Error('Authentication is required.');
+  const claims = await verifyToken(token, {
+    secretKey: config.clerk.secretKey,
+    authorizedParties: config.clerk.authorizedParties
   });
-
-  function requireAuthenticated(req, res, next) {
-    const { isAuthenticated, userId, sessionId } = getAuth(req);
-    if (!isAuthenticated || !userId) return unauthorized(res);
-    assignViewer(req, { userId, sessionId });
-    next();
-  }
-
-  return {
-    initialize,
-    requireAuthenticated,
-    authenticateSocket: configuredSocketAuthenticator(clerk)
-  };
+  if (!claims?.sub) throw new Error('Authentication is required.');
+  return { userId: claims.sub, sessionId: claims.sid ?? null };
 }

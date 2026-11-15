@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import { createTimelineService } from '../../src/modules/timeline/timelineService.js';
+import { mock, test } from 'node:test';
+
+const prisma = {};
+mock.module('../../src/db/prisma.js', { exports: { prisma } });
+const timelineService = await import('../../src/modules/timeline/timelineService.js');
+
+function usePrisma(client) {
+  for (const key of Object.keys(prisma)) delete prisma[key];
+  Object.assign(prisma, client);
+  return timelineService;
+}
 
 function createDelivery(batterRuns) {
   return {
@@ -52,9 +61,7 @@ test('reconciles a corrected delivery by deleting its obsolete timeline event', 
       }
     }
   };
-  const service = createTimelineService({
-    prisma: { $transaction: async (operation) => operation(transaction) }
-  });
+  const service = usePrisma({ $transaction: async (operation) => operation(transaction) });
 
   const created = await service.synchronizeMatch({ matchId: 'match-1' });
   match.innings[0].deliveries = [createDelivery(0)];
@@ -68,29 +75,27 @@ test('reconciles a corrected delivery by deleting its obsolete timeline event', 
 });
 
 test('returns a stable, compact timeline response', async () => {
-  const service = createTimelineService({
-    prisma: {
-      match: { findUnique: async () => ({ id: 'match-1' }) },
-      timelineEvent: {
-        findMany: async () => [
-          {
-            id: 'event-1',
-            matchId: 'match-1',
-            inningsId: 'innings-1',
-            deliveryId: 'delivery-1',
-            deliverySequence: 1,
-            displayOver: 0,
-            displayBallLabel: '0.1',
-            type: 'FOUR',
-            title: 'Four by Batter One',
-            description: 'Batter One hit four at 0.1.',
-            importanceScore: 35,
-            importanceLevel: 'MINOR',
-            occurredAt: null,
-            innings: { inningsNumber: 1 }
-          }
-        ]
-      }
+  const service = usePrisma({
+    match: { findUnique: async () => ({ id: 'match-1' }) },
+    timelineEvent: {
+      findMany: async () => [
+        {
+          id: 'event-1',
+          matchId: 'match-1',
+          inningsId: 'innings-1',
+          deliveryId: 'delivery-1',
+          deliverySequence: 1,
+          displayOver: 0,
+          displayBallLabel: '0.1',
+          type: 'FOUR',
+          title: 'Four by Batter One',
+          description: 'Batter One hit four at 0.1.',
+          importanceScore: 35,
+          importanceLevel: 'MINOR',
+          occurredAt: null,
+          innings: { inningsNumber: 1 }
+        }
+      ]
     }
   });
 
@@ -125,7 +130,7 @@ test('recordDelivery fast-path creates a FOUR event for a boundary without full 
     }
   };
 
-  const service = createTimelineService({ prisma: prismaMock });
+  const service = usePrisma(prismaMock);
   const result = await service.recordDelivery({
     matchId: 'match-1',
     deliveryId: 'delivery-1',
@@ -136,6 +141,48 @@ test('recordDelivery fast-path creates a FOUR event for a boundary without full 
   assert.equal(result.created[0].type, 'FOUR');
   assert.equal(result.created[0].title, 'Four by Batter One');
   assert.equal(upsertedData.eventKey, 'delivery:delivery-1:four');
+});
+
+test('recordDelivery keeps milestone event payloads when a delivery crosses both thresholds', async () => {
+  const delivery = createDelivery(1);
+  delivery.totalRuns = 1;
+  const upsertedEvents = [];
+  const prismaMock = {
+    delivery: {
+      findUnique: async () => delivery,
+      aggregate: async ({ _sum }) =>
+        _sum.batterRuns ? { _sum: { batterRuns: 50 } } : { _sum: { totalRuns: 50 } },
+      findFirst: async ({ orderBy }) => (orderBy?.deliverySequence === 'asc' ? { id: 'delivery-0' } : null),
+      count: async () => 0
+    },
+    innings: {
+      findUnique: async () => ({ inningsNumber: 1 })
+    },
+    timelineEvent: {
+      upsert: async ({ create }) => {
+        upsertedEvents.push(create);
+        return { id: `event-${upsertedEvents.length}`, ...create };
+      }
+    }
+  };
+
+  const service = usePrisma(prismaMock);
+  const result = await service.recordDelivery({
+    matchId: 'match-1',
+    deliveryId: 'delivery-1',
+    action: 'created'
+  });
+
+  assert.deepEqual(
+    result.created.map((event) => event.type),
+    ['BATTER_MILESTONE', 'PARTNERSHIP_MILESTONE']
+  );
+  assert.equal(upsertedEvents[0].eventKey, 'batter-milestone:innings-1:batter-1:50');
+  assert.equal(upsertedEvents[1].eventKey, 'partnership-milestone:delivery-0:50');
+  assert.equal(
+    upsertedEvents[1].description,
+    'Batter One and Partner One added 50 runs together at 0.1.'
+  );
 });
 
 test('recordDelivery fast-path returns empty changes on a dot ball without creating events', async () => {
@@ -158,7 +205,7 @@ test('recordDelivery fast-path returns empty changes on a dot ball without creat
     }
   };
 
-  const service = createTimelineService({ prisma: prismaMock });
+  const service = usePrisma(prismaMock);
   const result = await service.recordDelivery({
     matchId: 'match-1',
     deliveryId: 'delivery-1',
@@ -172,12 +219,10 @@ test('recordDelivery fast-path returns empty changes on a dot ball without creat
 
 test('recordDelivery falls back to synchronizeMatch when action is corrected', async () => {
   let syncCalled = false;
-  const service = createTimelineService({
-    prisma: {
-      $transaction: async () => {
-        syncCalled = true;
-        return { created: [], updated: [{ id: 'updated-1' }], deleted: [] };
-      }
+  const service = usePrisma({
+    $transaction: async () => {
+      syncCalled = true;
+      return { created: [], updated: [{ id: 'updated-1' }], deleted: [] };
     }
   });
 

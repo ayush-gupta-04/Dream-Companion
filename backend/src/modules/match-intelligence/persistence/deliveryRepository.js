@@ -1,5 +1,37 @@
 import { validateNormalizedDelivery } from '../domain/validateNormalizedDelivery.js';
 
+function wicketCreateData(wickets) {
+  return wickets.map((wicket, index) => ({
+    wicketSequence: index + 1,
+    playerOutId: wicket.playerOutId,
+    kind: wicket.kind,
+    countsAsWicket: wicket.countsAsWicket,
+    fielders: wicket.fielders
+  }));
+}
+
+function deliveryData(normalized) {
+  return {
+    sourceRevision: normalized.source?.revision,
+    displayOver: normalized.display.overNumber,
+    displayBallLabel: normalized.display.ballLabel,
+    batterId: normalized.players.batterId,
+    nonStrikerId: normalized.players.nonStrikerId,
+    bowlerId: normalized.players.bowlerId,
+    batterRuns: normalized.runs.batter,
+    totalExtras: Object.values(normalized.extras).reduce((total, value) => total + value, 0),
+    totalRuns: normalized.runs.total,
+    wides: normalized.extras.wides,
+    noBalls: normalized.extras.noBalls,
+    byes: normalized.extras.byes,
+    legByes: normalized.extras.legByes,
+    penaltyRuns: normalized.extras.penaltyRuns,
+    isLegalDelivery: normalized.isLegalDelivery,
+    occurredAt: normalized.occurredAt,
+    rawPayload: normalized.rawPayload
+  };
+}
+
 /**
  * Stores a validated delivery. Duplicate/revision reconciliation intentionally
  * remains a Phase 3 ingestion concern; the database rejects duplicate sequences.
@@ -12,31 +44,9 @@ export async function createDelivery(prisma, { inningsId, delivery }) {
       inningsId,
       deliverySequence: normalized.deliverySequence,
       sourceDeliveryId: normalized.source?.deliveryId,
-      sourceRevision: normalized.source?.revision,
-      displayOver: normalized.display.overNumber,
-      displayBallLabel: normalized.display.ballLabel,
-      batterId: normalized.players.batterId,
-      nonStrikerId: normalized.players.nonStrikerId,
-      bowlerId: normalized.players.bowlerId,
-      batterRuns: normalized.runs.batter,
-      totalExtras: Object.values(normalized.extras).reduce((total, value) => total + value, 0),
-      totalRuns: normalized.runs.total,
-      wides: normalized.extras.wides,
-      noBalls: normalized.extras.noBalls,
-      byes: normalized.extras.byes,
-      legByes: normalized.extras.legByes,
-      penaltyRuns: normalized.extras.penaltyRuns,
-      isLegalDelivery: normalized.isLegalDelivery,
-      occurredAt: normalized.occurredAt,
-      rawPayload: normalized.rawPayload,
+      ...deliveryData(normalized),
       wickets: {
-        create: normalized.wickets.map((wicket, index) => ({
-          wicketSequence: index + 1,
-          playerOutId: wicket.playerOutId,
-          kind: wicket.kind,
-          countsAsWicket: wicket.countsAsWicket,
-          fielders: wicket.fielders
-        }))
+        create: wicketCreateData(normalized.wickets)
       }
     },
     include: { wickets: true }
@@ -49,32 +59,10 @@ export async function updateDelivery(prisma, deliveryId, delivery) {
   return prisma.delivery.update({
     where: { id: deliveryId },
     data: {
-      sourceRevision: normalized.source?.revision,
-      displayOver: normalized.display.overNumber,
-      displayBallLabel: normalized.display.ballLabel,
-      batterId: normalized.players.batterId,
-      nonStrikerId: normalized.players.nonStrikerId,
-      bowlerId: normalized.players.bowlerId,
-      batterRuns: normalized.runs.batter,
-      totalExtras: Object.values(normalized.extras).reduce((total, value) => total + value, 0),
-      totalRuns: normalized.runs.total,
-      wides: normalized.extras.wides,
-      noBalls: normalized.extras.noBalls,
-      byes: normalized.extras.byes,
-      legByes: normalized.extras.legByes,
-      penaltyRuns: normalized.extras.penaltyRuns,
-      isLegalDelivery: normalized.isLegalDelivery,
-      occurredAt: normalized.occurredAt,
-      rawPayload: normalized.rawPayload,
+      ...deliveryData(normalized),
       wickets: {
         deleteMany: {},
-        create: normalized.wickets.map((wicket, index) => ({
-          wicketSequence: index + 1,
-          playerOutId: wicket.playerOutId,
-          kind: wicket.kind,
-          countsAsWicket: wicket.countsAsWicket,
-          fielders: wicket.fielders
-        }))
+        create: wicketCreateData(normalized.wickets)
       }
     },
     include: { wickets: true }

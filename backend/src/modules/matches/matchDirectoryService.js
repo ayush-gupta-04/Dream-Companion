@@ -1,4 +1,6 @@
 import { getMatchCardImageUrl } from './matchCardImageService.js';
+import { prisma } from '../../db/prisma.js';
+import { isLiveMatchId } from '../../replay/liveReplayManager.js';
 
 const statusOrder = {
   LIVE: 0,
@@ -23,7 +25,7 @@ function latestActivityAt(match) {
   return latestDelivery ?? match.updatedAt;
 }
 
-function presentMatchCard(match, isLiveMatchId) {
+function presentMatchCard(match) {
   const updatedAt = latestActivityAt(match);
 
   return {
@@ -31,7 +33,7 @@ function presentMatchCard(match, isLiveMatchId) {
     displayName: match.name,
     imageUrl: getMatchCardImageUrl(match.id),
     status: match.status,
-    isLiveSimulation: Boolean(isLiveMatchId?.(match.id)),
+    isLiveSimulation: isLiveMatchId(match.id),
     freshness: {
       updatedAt: new Date(updatedAt).toISOString()
     }
@@ -53,11 +55,9 @@ function compareMatchCards(left, right) {
  * Returns the minimal public contract needed to browse available matches.
  * The latest ingested delivery provides freshness when one exists; otherwise
  * the match metadata timestamp is the only factual update reference.
- *
- * @param {import('@prisma/client').PrismaClient} prismaClient
  */
-export async function listMatchCards(prismaClient, { isLiveMatchId } = {}) {
-  const matches = await prismaClient.match.findMany({
+export async function listMatchCards() {
+  const matches = await prisma.match.findMany({
     select: {
       id: true,
       name: true,
@@ -77,6 +77,6 @@ export async function listMatchCards(prismaClient, { isLiveMatchId } = {}) {
 
   return {
     generatedAt: new Date().toISOString(),
-    matches: matches.map((match) => presentMatchCard(match, isLiveMatchId)).sort(compareMatchCards)
+    matches: matches.map(presentMatchCard).sort(compareMatchCards)
   };
 }

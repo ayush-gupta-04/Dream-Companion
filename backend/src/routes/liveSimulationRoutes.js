@@ -1,10 +1,8 @@
 import { Router } from 'express';
-import { createLiveSimulationController } from '../controllers/liveSimulationController.js';
+import { start } from '../controllers/liveSimulationController.js';
 
-export function createLiveSimulationRoutes(liveReplayManager) {
-  const router = Router();
-  const controller = createLiveSimulationController(liveReplayManager);
+const router = Router();
 
-  router.post('/matches/:matchId/live-simulation', controller.start);
-  return router;
-}
+router.post('/matches/:matchId/live-simulation', start);
+
+export default router;

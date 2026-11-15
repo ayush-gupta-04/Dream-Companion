@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { z } from 'zod';
-import { AiUnavailableError, createGeminiClient } from '../../src/modules/ai/geminiClient.js';
+import { config } from '../../src/config/index.js';
+import { AiUnavailableError, generateStructured } from '../../src/modules/ai/geminiClient.js';
 
-test('createGeminiClient returns null when apiKey is missing', () => {
-  assert.equal(createGeminiClient({ apiKey: '' }), null);
-  assert.equal(createGeminiClient(null), null);
+test('generateStructured rejects an unconfigured AI provider', async () => {
+  config.gemini.apiKey = '';
+  await assert.rejects(
+    () => generateStructured({ prompt: 'hello', schema: z.object({ ok: z.boolean() }) }),
+    AiUnavailableError
+  );
 });
 
 test('generateStructured passes Gemini 3 thinkingLevel when configured', async () => {
@@ -22,7 +26,7 @@ test('generateStructured passes Gemini 3 thinkingLevel when configured', async (
   };
 
   try {
-    const client = createGeminiClient({
+    Object.assign(config.gemini, {
       apiKey: 'test-key',
       model: 'gemini-3.5-flash',
       thinkingLevel: 'MINIMAL',
@@ -30,7 +34,7 @@ test('generateStructured passes Gemini 3 thinkingLevel when configured', async (
       maxOutputTokens: 2000
     });
 
-    const result = await client.generateStructured({
+    const result = await generateStructured({
       prompt: 'hello',
       schema: z.object({ ok: z.boolean() })
     });
@@ -59,7 +63,7 @@ test('generateStructured supports thinkingLevel for flash-lite models', async ()
   };
 
   try {
-    const client = createGeminiClient({
+    Object.assign(config.gemini, {
       apiKey: 'test-key',
       model: 'gemini-3.5-flash-lite',
       thinkingLevel: 'MINIMAL',
@@ -67,7 +71,7 @@ test('generateStructured supports thinkingLevel for flash-lite models', async ()
       maxOutputTokens: 1000
     });
 
-    const result = await client.generateStructured({
+    const result = await generateStructured({
       prompt: 'hello',
       schema: z.object({ ok: z.boolean() })
     });
@@ -89,7 +93,7 @@ test('generateStructured handles request timeouts gracefully', async () => {
   };
 
   try {
-    const client = createGeminiClient({
+    Object.assign(config.gemini, {
       apiKey: 'test-key',
       model: 'gemini-3.5-flash',
       timeoutMs: 100
@@ -97,7 +101,7 @@ test('generateStructured handles request timeouts gracefully', async () => {
 
     await assert.rejects(
       () =>
-        client.generateStructured({
+        generateStructured({
           prompt: 'hello',
           schema: z.object({ ok: z.boolean() })
         }),
@@ -123,14 +127,14 @@ test('generateStructured throws AiUnavailableError when response fails schema va
   });
 
   try {
-    const client = createGeminiClient({
+    Object.assign(config.gemini, {
       apiKey: 'test-key',
       model: 'gemini-3.5-flash'
     });
 
     await assert.rejects(
       () =>
-        client.generateStructured({
+        generateStructured({
           prompt: 'hello',
           schema: z.object({ expectedField: z.string() })
         }),
@@ -154,10 +158,10 @@ test('generateStructured reports the safe Gemini error status', async () => {
   });
 
   try {
-    const client = createGeminiClient({ apiKey: 'test-key', model: 'gemini-3.5-flash' });
+    Object.assign(config.gemini, { apiKey: 'test-key', model: 'gemini-3.5-flash' });
 
     await assert.rejects(
-      () => client.generateStructured({ prompt: 'hello', schema: z.object({ ok: z.boolean() }) }),
+      () => generateStructured({ prompt: 'hello', schema: z.object({ ok: z.boolean() }) }),
       (err) => {
         assert.ok(err instanceof AiUnavailableError);
         assert.equal(err.message, 'The AI provider rejected this request (INVALID_ARGUMENT).');

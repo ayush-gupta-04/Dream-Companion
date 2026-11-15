@@ -1,7 +1,8 @@
+import { prisma } from '../../../db/prisma.js';
 import { reconstructInningsState } from '../domain/reconstructInningsState.js';
 import { deliveryRecordToNormalizedDelivery } from '../persistence/deliveryRepository.js';
 
-export async function buildMatchState(prisma, matchId) {
+export async function buildMatchState(matchId) {
   const match = await prisma.match.findUnique({
     where: { id: matchId },
     include: {

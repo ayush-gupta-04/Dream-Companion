@@ -1,26 +1,43 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { test } from 'node:test';
+import { after, before, mock, test } from 'node:test';
 import { io as createClient } from 'socket.io-client';
-import {
-  createSocketServer,
+
+let requireToken = false;
+mock.module('../../src/auth/clerkAuth.js', {
+  exports: {
+    authenticateSocket: async (token) => {
+      if (requireToken && token !== 'valid-token') throw new Error('Invalid token');
+      return { userId: 'user_test', sessionId: 'sess_test' };
+    }
+  }
+});
+const {
+  io,
+  attachSocketServer,
   matchRoom,
   publishDeliveryUpdate,
   publishMatchStatus,
   publishTimelineChanges
-} from '../../src/sockets/socketServer.js';
+} = await import('../../src/sockets/socketServer.js');
+
+const httpServer = createServer();
+let port;
+before(async () => {
+  attachSocketServer(httpServer);
+  await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+  port = httpServer.address().port;
+});
+after(async () => {
+  io.close();
+  await new Promise((resolve) => httpServer.close(resolve));
+});
 
 test('publishes delivery and status updates to a match room in order', () => {
   const events = [];
-  const io = {
-    to(room) {
-      return {
-        emit(event, payload) {
-          events.push({ room, event, payload });
-        }
-      };
-    }
-  };
+  const to = mock.method(io, 'to', (room) => ({
+    emit: (event, payload) => events.push({ room, event, payload })
+  }));
   const delivery = {
     id: 'delivery-1',
     inningsId: 'innings-1',
@@ -35,8 +52,9 @@ test('publishes delivery and status updates to a match room in order', () => {
   };
   const state = { matchId: 'match-1', status: 'LIVE' };
 
-  publishDeliveryUpdate(io, 'match-1', 'created', delivery, state);
-  publishMatchStatus(io, 'match-1', 'COMPLETE');
+  publishDeliveryUpdate('match-1', 'created', delivery, state);
+  publishMatchStatus('match-1', 'COMPLETE');
+  to.mock.restore();
 
   assert.deepEqual(events, [
     {
@@ -63,18 +81,17 @@ test('publishes delivery and status updates to a match room in order', () => {
 
 test('publishes timeline reconciliation changes to the matching room', () => {
   const events = [];
-  const io = {
-    to(room) {
-      return { emit: (event, payload) => events.push({ room, event, payload }) };
-    }
-  };
+  const to = mock.method(io, 'to', (room) => ({
+    emit: (event, payload) => events.push({ room, event, payload })
+  }));
   const timelineEvent = { id: 'event-1', matchId: 'match-1', type: 'FOUR' };
 
-  publishTimelineChanges(io, {
+  publishTimelineChanges({
     created: [timelineEvent],
     updated: [{ ...timelineEvent, title: 'Updated four' }],
     deleted: [timelineEvent]
   });
+  to.mock.restore();
 
   assert.deepEqual(
     events.map((event) => event.event),
@@ -84,10 +101,6 @@ test('publishes timeline reconciliation changes to the matching room', () => {
 });
 
 test('joins a requested match room and receives only that room events', async () => {
-  const httpServer = createServer();
-  const io = createSocketServer(httpServer, 'http://localhost:5173');
-  await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
-  const port = httpServer.address().port;
   const client = createClient(`http://127.0.0.1:${port}`, { transports: ['websocket'] });
 
   try {
@@ -99,26 +112,16 @@ test('joins a requested match room and receives only that room events', async ()
     assert.deepEqual(joined, { ok: true });
 
     const received = new Promise((resolve) => client.once('match_status_updated', resolve));
-    publishMatchStatus(io, 'match-2', 'LIVE');
-    publishMatchStatus(io, 'match-1', 'COMPLETE');
+    publishMatchStatus('match-2', 'LIVE');
+    publishMatchStatus('match-1', 'COMPLETE');
     assert.deepEqual(await received, { matchId: 'match-1', status: 'COMPLETE' });
   } finally {
     client.close();
-    io.close();
-    await new Promise((resolve) => httpServer.close(resolve));
   }
 });
 
 test('rejects unauthenticated socket handshakes before joining a match room', async () => {
-  const httpServer = createServer();
-  const io = createSocketServer(httpServer, 'http://localhost:5173', {
-    authenticate: async (token) => {
-      if (token !== 'valid-token') throw new Error('Invalid token');
-      return { userId: 'user_test', sessionId: 'sess_test' };
-    }
-  });
-  await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
-  const port = httpServer.address().port;
+  requireToken = true;
   const anonymous = createClient(`http://127.0.0.1:${port}`, { transports: ['websocket'] });
   const authenticated = createClient(`http://127.0.0.1:${port}`, {
     transports: ['websocket'],
@@ -140,7 +143,6 @@ test('rejects unauthenticated socket handshakes before joining a match room', as
   } finally {
     anonymous.close();
     authenticated.close();
-    io.close();
-    await new Promise((resolve) => httpServer.close(resolve));
+    requireToken = false;
   }
 });

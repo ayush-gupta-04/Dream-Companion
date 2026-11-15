@@ -1,10 +1,18 @@
 import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
-import {
+import { describe, mock, test } from 'node:test';
+
+const prismaClient = {};
+mock.module('../../src/db/prisma.js', { exports: { prisma: prismaClient } });
+const {
   analyzeOver,
   analyzePlayer,
   compareOvers
-} from '../../src/modules/analytics/matchAnalyticsService.js';
+} = await import('../../src/modules/analytics/matchAnalyticsService.js');
+
+function usePrisma(client) {
+  for (const key of Object.keys(prismaClient)) delete prismaClient[key];
+  Object.assign(prismaClient, client);
+}
 
 const wicket = { countsAsWicket: true, kind: 'caught' };
 const deliveries = [
@@ -71,7 +79,8 @@ describe('match analytics', () => {
       delivery: { findMany: async () => deliveries }
     };
 
-    const analysis = await analyzeOver(prisma, {
+    usePrisma(prisma);
+    const analysis = await analyzeOver({
       matchId: 'match-1',
       inningsNumber: 1,
       overNumber: 0
@@ -113,7 +122,8 @@ describe('match analytics', () => {
       delivery: { findMany: async () => allDeliveries }
     };
 
-    const analysis = await analyzeOver(prisma, { matchId: 'match-1' });
+    usePrisma(prisma);
+    const analysis = await analyzeOver({ matchId: 'match-1' });
 
     assert.equal(analysis.overNumber, 0);
     assert.equal(analysis.runs, 5);
@@ -147,7 +157,8 @@ describe('match analytics', () => {
       }
     };
 
-    const comparison = await compareOvers(prisma, {
+    usePrisma(prisma);
+    const comparison = await compareOvers({
       matchId: 'match-1',
       inningsNumber: 1,
       over1: 0,
@@ -166,7 +177,7 @@ describe('match analytics', () => {
 
   test('rejects attempts to compare an over with itself', async () => {
     await assert.rejects(
-      compareOvers({}, { matchId: 'match-1', inningsNumber: 1, over1: 4, over2: 4 }),
+      compareOvers({ matchId: 'match-1', inningsNumber: 1, over1: 4, over2: 4 }),
       { message: 'Choose two different overs to compare.' }
     );
   });
@@ -185,7 +196,8 @@ describe('match analytics', () => {
       }
     };
 
-    const analysis = await analyzePlayer(prisma, { matchId: 'match-1', playerId: 'batter-1' });
+    usePrisma(prisma);
+    const analysis = await analyzePlayer({ matchId: 'match-1', playerId: 'batter-1' });
 
     assert.equal(analysis.batting.runs, 4);
     assert.equal(analysis.batting.ballsFaced, 2);

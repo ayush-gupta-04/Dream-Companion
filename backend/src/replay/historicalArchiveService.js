@@ -1,6 +1,9 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { config } from '../config/index.js';
+import { prisma } from '../db/prisma.js';
+import * as timelineService from '../modules/timeline/timelineService.js';
 import { adaptCricsheetMatch } from '../modules/ingestion/cricsheetAdapter.js';
 import { processDelivery } from '../modules/ingestion/deliveryProcessor.js';
 import { bootstrapCricsheetMatch } from '../modules/ingestion/matchBootstrapService.js';
@@ -26,7 +29,7 @@ async function loadAdaptedMatch(filePath) {
   return adaptCricsheetMatch(rawMatch, sourceMatchId);
 }
 
-async function historicalMatchIsCurrent(prisma, adaptedMatch) {
+async function historicalMatchIsCurrent(adaptedMatch) {
   const existing = await prisma.match.findUnique({
     where: {
       source_sourceMatchId: {
@@ -40,21 +43,16 @@ async function historicalMatchIsCurrent(prisma, adaptedMatch) {
   return existing?.sourceRevision === adaptedMatch.sourceRevision && existing.status === 'COMPLETE';
 }
 
-async function persistHistoricalMatch({ prisma, stateCache, timelineService, adaptedMatch }) {
-  const preparedMatch = await bootstrapCricsheetMatch(prisma, adaptedMatch);
+async function persistHistoricalMatch(adaptedMatch) {
+  const preparedMatch = await bootstrapCricsheetMatch(adaptedMatch);
 
   // A source revision or an interrupted earlier import starts from a clean
   // delivery-derived record while retaining stable identity records.
-  await clearMatchSimulationData({
-    prisma,
-    stateCache,
-    matchId: preparedMatch.match.id,
-    status: 'SCHEDULED'
-  });
+  await clearMatchSimulationData({ matchId: preparedMatch.match.id, status: 'SCHEDULED' });
 
   for (const innings of preparedMatch.innings) {
     for (const delivery of innings.deliveries) {
-      await processDelivery(prisma, { inningsId: innings.id, delivery });
+      await processDelivery({ inningsId: innings.id, delivery });
     }
   }
 
@@ -70,12 +68,8 @@ async function persistHistoricalMatch({ prisma, stateCache, timelineService, ada
 /**
  * Bootstraps the single live replay match so that live simulations are ready immediately.
  */
-export async function bootstrapLiveMatch({
-  prisma,
-  stateCache,
-  dataDirectory,
-  liveFileName
-}) {
+export async function bootstrapLiveMatch() {
+  const { dataDirectory, liveFileName } = config.replay;
   const archiveDirectory = resolveArchiveDirectory(dataDirectory);
   if (!archiveDirectory) {
     throw new Error(`Cricsheet archive directory was not found: ${dataDirectory}`);
@@ -90,13 +84,8 @@ export async function bootstrapLiveMatch({
   }
 
   const adaptedMatch = await loadAdaptedMatch(liveFilePath);
-  const preparedMatch = await bootstrapCricsheetMatch(prisma, adaptedMatch);
-  await clearMatchSimulationData({
-    prisma,
-    stateCache,
-    matchId: preparedMatch.match.id,
-    status: 'LIVE'
-  });
+  const preparedMatch = await bootstrapCricsheetMatch(adaptedMatch);
+  await clearMatchSimulationData({ matchId: preparedMatch.match.id, status: 'LIVE' });
 
   return {
     archiveDirectory,
@@ -108,14 +97,9 @@ export async function bootstrapLiveMatch({
 /**
  * Seeds historical match archives in the background without blocking server startup.
  */
-export async function seedHistoricalArchive({
-  prisma,
-  stateCache,
-  timelineService,
-  dataDirectory,
-  liveFileName,
-  limit = 10
-}) {
+export async function seedHistoricalArchive({ signal } = {}) {
+  if (signal?.aborted) return;
+  const { dataDirectory, liveFileName, seedLimit: limit } = config.replay;
   const archiveDirectory = resolveArchiveDirectory(dataDirectory);
   if (!archiveDirectory) return;
 
@@ -135,16 +119,17 @@ export async function seedHistoricalArchive({
   let skipped = 0;
 
   for (let i = 0; i < targetFiles.length; i++) {
+    if (signal?.aborted) break;
     const fileName = targetFiles[i];
     try {
       const adaptedMatch = await loadAdaptedMatch(path.join(archiveDirectory, fileName));
-      if (await historicalMatchIsCurrent(prisma, adaptedMatch)) {
+      if (await historicalMatchIsCurrent(adaptedMatch)) {
         skipped++;
         continue;
       }
 
       console.log(`[Archive] Seeding match (${i + 1}/${targetFiles.length}): ${fileName}...`);
-      await persistHistoricalMatch({ prisma, stateCache, timelineService, adaptedMatch });
+      await persistHistoricalMatch(adaptedMatch);
       seeded++;
     } catch (error) {
       console.error(`[Archive] Could not persist Cricsheet source ${fileName}: ${error.message}`);
@@ -152,29 +137,4 @@ export async function seedHistoricalArchive({
   }
 
   console.log(`[Archive] Background seeding complete: ${seeded} seeded, ${skipped} unchanged.`);
-}
-
-/**
- * Persists live match first and provides legacy signature support.
- */
-export async function bootstrapHistoricalArchive({
-  prisma,
-  stateCache,
-  timelineService,
-  dataDirectory,
-  liveFileName
-}) {
-  const liveResult = await bootstrapLiveMatch({
-    prisma,
-    stateCache,
-    dataDirectory,
-    liveFileName
-  });
-
-  return {
-    ...liveResult,
-    historicalMatchesSeeded: 0,
-    historicalMatchesSkipped: 0,
-    totalFiles: 1
-  };
 }

@@ -1,3 +1,4 @@
+import { prisma } from '../../db/prisma.js';
 import { toTimelineEvent } from './timelineEventPresenter.js';
 
 const importanceLevels = {
@@ -79,9 +80,7 @@ function validateSequenceFilters({ inningsNumber, startSequence, endSequence }) 
  * Searches factual, reconciled timeline events. It never searches generated
  * prose, so every returned result has a durable event and delivery reference.
  */
-export async function searchMatchEvents(
-  prisma,
-  {
+export async function searchMatchEvents({
     matchId,
     inningsNumber,
     types,
@@ -91,8 +90,7 @@ export async function searchMatchEvents(
     minimumImportance,
     limit = 50,
     cursor
-  }
-) {
+}) {
   validateSequenceFilters({ inningsNumber, startSequence, endSequence });
 
   const match = await prisma.match.findUnique({ where: { id: matchId }, select: { id: true } });
@@ -155,13 +153,5 @@ export async function searchMatchEvents(
     events,
     nextCursor: hasMore ? events.at(-1).id : null,
     references: events.map(eventReference)
-  };
-}
-
-export function createEventSearchService({ prisma }) {
-  return {
-    search(request) {
-      return searchMatchEvents(prisma, request);
-    }
   };
 }

@@ -1,9 +1,13 @@
 import { readFile } from 'node:fs/promises';
+import { prisma } from '../db/prisma.js';
 import { adaptCricsheetMatch } from '../modules/ingestion/cricsheetAdapter.js';
 import { bootstrapCricsheetMatch } from '../modules/ingestion/matchBootstrapService.js';
 import { processDelivery } from '../modules/ingestion/deliveryProcessor.js';
 import { buildMatchState } from '../modules/match-intelligence/state/matchStateService.js';
+import * as stateCache from '../modules/match-intelligence/state/matchStateCache.js';
+import * as timelineService from '../modules/timeline/timelineService.js';
 import {
+  io,
   matchRoom,
   publishDeliveryUpdate,
   publishMatchStatus,
@@ -30,17 +34,13 @@ export async function replayCricsheetFile({
   filePath,
   sourceMatchId,
   intervalMs,
-  prisma,
-  stateCache,
-  io,
-  timelineService,
   signal,
   onProgress,
   pause = wait
 }) {
   const rawMatch = JSON.parse(await readFile(filePath, 'utf8'));
   const adaptedMatch = adaptCricsheetMatch(rawMatch, sourceMatchId);
-  const preparedMatch = await bootstrapCricsheetMatch(prisma, adaptedMatch);
+  const preparedMatch = await bootstrapCricsheetMatch(adaptedMatch);
 
   const totalDeliveries = preparedMatch.innings.reduce(
     (sum, inn) => sum + (inn.deliveries?.length || 0),
@@ -56,19 +56,11 @@ export async function replayCricsheetFile({
 
   // Change Match state to LIVE.
   await prisma.match.update({ where: { id: preparedMatch.match.id }, data: { status: 'LIVE' } });
-  if (io) {
-    publishMatchStatus(io, preparedMatch.match.id, 'LIVE');
-  }
+  publishMatchStatus(preparedMatch.match.id, 'LIVE');
 
-
-
-  const initialState = await buildMatchState(prisma, preparedMatch.match.id);
-  if (stateCache && typeof stateCache.set === 'function') {
-    await stateCache.set(preparedMatch.match.id, initialState);
-  }
-  if (io) {
-    io.to(matchRoom(preparedMatch.match.id)).emit('score_updated', initialState);
-  }
+  const initialState = await buildMatchState(preparedMatch.match.id);
+  await stateCache.set(preparedMatch.match.id, initialState);
+  io.to(matchRoom(preparedMatch.match.id)).emit('score_updated', initialState);
 
   let processedCount = 0;
 
@@ -82,8 +74,6 @@ export async function replayCricsheetFile({
       `[Replay] --- Starting Innings ${innings.inningsNumber} (${innings.deliveries.length} deliveries) ---`
     );
 
-
-    // Processing every Deliveries one by one.
     for (const delivery of innings.deliveries) {
       if (signal?.aborted) {
         console.log('[Replay] Simulation stopped.');
@@ -91,8 +81,7 @@ export async function replayCricsheetFile({
       }
 
       processedCount += 1;
-      // Save the delivery to the DB.
-      const result = await processDelivery(prisma, { inningsId: innings.id, delivery });
+      const result = await processDelivery({ inningsId: innings.id, delivery });
 
       if (onProgress) {
         onProgress({
@@ -118,40 +107,24 @@ export async function replayCricsheetFile({
         `[Replay] Inn ${innings.inningsNumber} | Over ${delivery.display.ballLabel} | ${runsInfo}${extrasInfo} | Action: ${result.action}`
       );
 
+      const state = await buildMatchState(preparedMatch.match.id);
+      await stateCache.set(preparedMatch.match.id, state);
+      publishDeliveryUpdate(preparedMatch.match.id, result.action, result.record, state);
 
-      const state = await buildMatchState(prisma, preparedMatch.match.id);  // saving the current match state to DB
-      if (stateCache && typeof stateCache.set === 'function') {  // saving the current match state to REDIS
-        await stateCache.set(preparedMatch.match.id, state);
+      const timelineChanges = await timelineService.recordDelivery({
+        matchId: preparedMatch.match.id,
+        deliveryId: result.record.id,
+        action: result.action
+      });
+      publishTimelineChanges(timelineChanges);
+
+      for (const event of timelineChanges.created) {
+        console.log(
+          `[Timeline] [${event.type}] [${event.importanceLevel}] ${event.title}: ${event.description}`
+        );
       }
-      // Publish the current match state.
-      if (io) {
-        publishDeliveryUpdate(io, preparedMatch.match.id, result.action, result.record, state);
-      }
-
-
-      // Creating the Timeline Events (Fast-path per delivery).
-      if (timelineService) {
-        const timelineChanges =
-          typeof timelineService.recordDelivery === 'function'
-            ? await timelineService.recordDelivery({
-                matchId: preparedMatch.match.id,
-                deliveryId: result.record.id,
-                action: result.action
-              })
-            : await timelineService.synchronizeMatch({ matchId: preparedMatch.match.id });
-
-        if (io) {
-          publishTimelineChanges(io, timelineChanges);
-        }
-
-        for (const event of timelineChanges.created) {
-          console.log(
-            `[Timeline] [${event.type}] [${event.importanceLevel}] ${event.title}: ${event.description}`
-          );
-        }
-        for (const event of timelineChanges.updated) {
-          console.log(`[Timeline:Updated] [${event.type}] ${event.title}`);
-        }
+      for (const event of timelineChanges.updated) {
+        console.log(`[Timeline:Updated] [${event.type}] ${event.title}`);
       }
 
       await pause(intervalMs, signal);
@@ -162,25 +135,15 @@ export async function replayCricsheetFile({
     where: { id: preparedMatch.match.id },
     data: { status: 'COMPLETE' }
   });
-  const state = await buildMatchState(prisma, preparedMatch.match.id);
-  if (stateCache && typeof stateCache.set === 'function') {
-    await stateCache.set(preparedMatch.match.id, state);
-  }
-  if (io) {
-    io.to(matchRoom(preparedMatch.match.id)).emit('score_updated', state);
-  }
-  if (io) {
-    publishMatchStatus(io, preparedMatch.match.id, 'COMPLETE');
-  }
+  const state = await buildMatchState(preparedMatch.match.id);
+  await stateCache.set(preparedMatch.match.id, state);
+  io.to(matchRoom(preparedMatch.match.id)).emit('score_updated', state);
+  publishMatchStatus(preparedMatch.match.id, 'COMPLETE');
 
-  if (timelineService) {
-    const finalTimelineChanges = await timelineService.synchronizeMatch({
-      matchId: preparedMatch.match.id
-    });
-    if (io) {
-      publishTimelineChanges(io, finalTimelineChanges);
-    }
-  }
+  const finalTimelineChanges = await timelineService.synchronizeMatch({
+    matchId: preparedMatch.match.id
+  });
+  publishTimelineChanges(finalTimelineChanges);
 
   console.log(
     `[Replay] Simulation completed for "${adaptedMatch.name}". Match status set to COMPLETE.`

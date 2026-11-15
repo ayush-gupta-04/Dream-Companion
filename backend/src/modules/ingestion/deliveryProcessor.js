@@ -3,10 +3,9 @@ import {
   updateDelivery
 } from '../match-intelligence/persistence/deliveryRepository.js';
 import { validateNormalizedDelivery } from '../match-intelligence/domain/validateNormalizedDelivery.js';
+import { prisma } from '../../db/prisma.js';
 
-// With Idempotency, store the Deliveries in DB.
-
-export async function processDelivery(prisma, { inningsId, delivery }) {
+export async function processDelivery({ inningsId, delivery }) {
   const normalized = validateNormalizedDelivery(delivery);
   const sourceDeliveryId = normalized.source?.deliveryId;
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createRecapService } from '../../src/modules/summaries/recapService.js';
+import { join } from '../../src/modules/summaries/recapService.js';
 
 test(
   'persists an authenticated viewer session marker for a match',
@@ -9,10 +9,9 @@ test(
     const { prisma } = await import('../../src/db/prisma.js');
     const suffix = `${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
     const match = await prisma.match.create({ data: { name: `Phase 5 test ${suffix}` } });
-    const service = createRecapService({ prisma, narrate: null });
 
     try {
-      const session = await service.join({
+      const session = await join({
         matchId: match.id,
         viewer: { userId: 'user_persistence_test', sessionId: 'sess_persistence_test' }
       });

@@ -1,13 +1,35 @@
 import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
+import { describe, mock, test } from 'node:test';
 import request from 'supertest';
-import { createApp } from '../src/app.js';
-import { createAskMatchService } from '../src/modules/ai/askMatchService.js';
-import { createMatchQueryService } from '../src/modules/ai/matchQueryService.js';
-import { createRecapService } from '../src/modules/summaries/recapService.js';
-import { createTimelineService } from '../src/modules/timeline/timelineService.js';
-import { createEventSearchService } from '../src/modules/timeline/eventSearchService.js';
-import { MatchStateCache } from '../src/modules/match-intelligence/state/matchStateCache.js';
+import { config } from '../src/config/index.js';
+
+const realStateCache = await import('../src/modules/match-intelligence/state/matchStateCache.js');
+let activePrisma = {};
+let activeStateCache;
+let aiClient;
+const prismaProxy = new Proxy({}, {
+  get(_target, property) {
+    const value = activePrisma[property];
+    return typeof value === 'function' ? value.bind(activePrisma) : value;
+  }
+});
+mock.module('../src/db/prisma.js', { exports: { prisma: prismaProxy } });
+mock.module('../src/modules/match-intelligence/state/matchStateCache.js', {
+  exports: {
+    getOrBuild: (...args) => activeStateCache.getOrBuild(...args),
+    set: (...args) => activeStateCache.set(...args),
+    clear: (...args) => activeStateCache.clear(...args)
+  }
+});
+mock.module('../src/modules/ai/geminiMatchQueryClient.js', {
+  exports: {
+    selectTool: (request) => aiClient.selectTool(request),
+    narrateAnalysis: (request) => aiClient.narrateAnalysis(request),
+    narrateRecap: (request) => aiClient.narrateRecap(request)
+  }
+});
+const { default: app } = await import('../src/app.js');
+const timelineService = await import('../src/modules/timeline/timelineService.js');
 
 describe('MVP End-to-End System Tests', () => {
   const matchId = 'match-mvp-1';
@@ -279,6 +301,7 @@ describe('MVP End-to-End System Tests', () => {
       updateMany: async ({ where }) => ({ count: where.id === mockSession.id ? 1 : 0 })
     }
   };
+  activePrisma = mockPrisma;
 
   function toolSelection(tool, overrides = {}) {
     return {
@@ -340,35 +363,15 @@ describe('MVP End-to-End System Tests', () => {
       };
     }
   };
+  aiClient = mockQueryAi;
+  config.gemini.apiKey = 'test-key';
 
-  const stateCache = new MatchStateCache({
-    get: async () => null,
+  const stateCache = {
+    getOrBuild: async (_matchId, build) => build(),
     set: async () => {},
-    del: async () => {}
-  });
-
-  const analysisService = createAskMatchService({
-    prisma: mockPrisma,
-    narrate: mockQueryAi.narrateAnalysis
-  });
-  const recapService = createRecapService({
-    prisma: mockPrisma,
-    narrate: mockQueryAi.narrateRecap
-  });
-  const matchQueryService = createMatchQueryService({
-    prisma: mockPrisma,
-    aiClient: mockQueryAi,
-    analysisService,
-    recapService
-  });
-  const app = createApp({
-    stateCache,
-    prismaClient: mockPrisma,
-    recapService,
-    matchQueryService,
-    timelineService: createTimelineService({ prisma: mockPrisma }),
-    eventSearchService: createEventSearchService({ prisma: mockPrisma })
-  });
+    clear: async () => {}
+  };
+  activeStateCache = stateCache;
 
   describe('MVP Feature 1: Smart Match Timeline', () => {
     test('GET /api/matches/:id/timeline returns chronological events with importance levels', async () => {
@@ -576,21 +579,16 @@ describe('MVP End-to-End System Tests', () => {
     });
 
     test('returns 503 when AI is not configured', async () => {
-      const unconfiguredApp = createApp({
-        stateCache,
-        prismaClient: mockPrisma,
-        matchQueryService: createMatchQueryService({
-          prisma: mockPrisma,
-          aiClient: null,
-          analysisService,
-          recapService
-        })
-      });
-      const res = await request(unconfiguredApp)
-        .post(`/api/matches/${matchId}/query`)
-        .send({ query: 'Analyse the first over' });
-      assert.equal(res.status, 503);
-      assert.equal(res.body.message, 'AI features are not configured.');
+      config.gemini.apiKey = '';
+      try {
+        const res = await request(app)
+          .post(`/api/matches/${matchId}/query`)
+          .send({ query: 'Analyse the first over' });
+        assert.equal(res.status, 503);
+        assert.equal(res.body.message, 'AI features are not configured.');
+      } finally {
+        config.gemini.apiKey = 'test-key';
+      }
     });
   });
 
@@ -654,22 +652,20 @@ describe('MVP End-to-End System Tests', () => {
     { skip: process.env.RUN_DATABASE_TESTS !== 'true' },
     () => {
       test('queries real match data and verifies all MVP endpoints with PostgreSQL and Redis', async () => {
-        const { prisma } = await import('../src/db/prisma.js');
-        const { createClient } = await import('redis');
+        const { PrismaClient } = await import('@prisma/client');
+        const prisma = new PrismaClient();
+        activePrisma = prisma;
+        const { redisClient: sharedRedisClient } = await import('../src/db/redis.js');
         const { createDelivery } =
           await import('../src/modules/match-intelligence/persistence/deliveryRepository.js');
         const { normalizedDelivery } = await import('./fixtures/normalizedDeliveries.js');
 
         // Connect to live Redis
-        let redisClient = null;
+        const redisClient = sharedRedisClient;
         let liveStateCache = stateCache;
         try {
-          redisClient = createClient({
-            url: process.env.REDIS_URL || 'redis://localhost:6379',
-            socket: { reconnectStrategy: false }
-          });
           await redisClient.connect();
-          liveStateCache = new MatchStateCache(redisClient);
+          liveStateCache = realStateCache;
         } catch {
           // Redis unavailable, keep fallback cache
         }
@@ -776,8 +772,7 @@ describe('MVP End-to-End System Tests', () => {
           }
 
           // Synchronize timeline events
-          const liveTimeline = createTimelineService({ prisma });
-          await liveTimeline.synchronizeMatch({ matchId: seededMatch.id });
+          await timelineService.synchronizeMatch({ matchId: seededMatch.id });
 
           dbMatch = {
             id: seededMatch.id,
@@ -786,32 +781,10 @@ describe('MVP End-to-End System Tests', () => {
         }
 
         try {
-          const liveAnalysisService = createAskMatchService({
-            prisma,
-            narrate: mockQueryAi.narrateAnalysis
-          });
-          const liveRecapService = createRecapService({
-            prisma,
-            narrate: mockQueryAi.narrateRecap
-          });
-          const liveTimelineService = createTimelineService({ prisma });
-          const liveEventSearchService = createEventSearchService({ prisma });
-          const liveApp = createApp({
-            stateCache: liveStateCache,
-            prismaClient: prisma,
-            recapService: liveRecapService,
-            matchQueryService: createMatchQueryService({
-              prisma,
-              aiClient: mockQueryAi,
-              analysisService: liveAnalysisService,
-              recapService: liveRecapService
-            }),
-            timelineService: liveTimelineService,
-            eventSearchService: liveEventSearchService
-          });
+          activeStateCache = liveStateCache;
 
           // 1. State API + Redis Caching Verification
-          const stateRes = await request(liveApp).get(`/api/matches/${dbMatch.id}/state`);
+          const stateRes = await request(app).get(`/api/matches/${dbMatch.id}/state`);
           assert.equal(stateRes.status, 200);
           assert.ok(stateRes.body.state.innings.length >= 1);
 
@@ -822,26 +795,26 @@ describe('MVP End-to-End System Tests', () => {
             assert.equal(parsed.matchId, dbMatch.id);
 
             // Second request should hit Redis cache
-            const cachedRes = await request(liveApp).get(`/api/matches/${dbMatch.id}/state`);
+            const cachedRes = await request(app).get(`/api/matches/${dbMatch.id}/state`);
             assert.equal(cachedRes.status, 200);
             assert.equal(cachedRes.body.state.matchId, dbMatch.id);
           }
 
           // 2. Smart Match Timeline API
-          const timelineRes = await request(liveApp).get(
+          const timelineRes = await request(app).get(
             `/api/matches/${dbMatch.id}/timeline?limit=5`
           );
           assert.equal(timelineRes.status, 200);
           assert.ok(timelineRes.body.events.length > 0);
 
           // 3. Catch Me Up through the shared query endpoint
-          const recapRes = await request(liveApp)
+          const recapRes = await request(app)
             .post(`/api/matches/${dbMatch.id}/query`)
             .send({ query: 'Summarize the whole match' });
           assert.equal(recapRes.status, 200);
           assert.equal(recapRes.body.evidence.totals.runs > 0, true);
 
-          const recapLastNOvers = await request(liveApp)
+          const recapLastNOvers = await request(app)
             .post(`/api/matches/${dbMatch.id}/query`)
             .send({ query: 'Summarize the last 2 overs' });
           assert.equal(recapLastNOvers.status, 200);
@@ -849,19 +822,19 @@ describe('MVP End-to-End System Tests', () => {
           assert.equal(recapLastNOvers.body.window.overRange.requestedOvers, 2);
 
           // 4. Authenticated Match-Session Join & Leave
-          const joinRes = await request(liveApp)
+          const joinRes = await request(app)
             .post(`/api/matches/${dbMatch.id}/sessions/join`)
             .send({});
           assert.equal(joinRes.status, 201);
           assert.ok(joinRes.body.session?.id);
 
-          const leaveRes = await request(liveApp)
+          const leaveRes = await request(app)
             .post(`/api/matches/${dbMatch.id}/sessions/leave`)
             .send({ sessionId: joinRes.body.session.id });
           assert.equal(leaveRes.status, 204);
 
           // 5. Ask the Match through the shared query endpoint
-          const askRes = await request(liveApp)
+          const askRes = await request(app)
             .post(`/api/matches/${dbMatch.id}/query`)
             .send({ query: 'Analyse the first over' });
           assert.equal(askRes.status, 200);
@@ -869,7 +842,7 @@ describe('MVP End-to-End System Tests', () => {
           assert.ok(askRes.body.evidence?.runs !== undefined);
 
           // 6. Over Comparison Analytics API
-          const compareRes = await request(liveApp).get(
+          const compareRes = await request(app).get(
             `/api/matches/${dbMatch.id}/analytics/overs/compare?innings=1&over1=0&over2=1`
           );
           assert.equal(compareRes.status, 200);
@@ -877,7 +850,7 @@ describe('MVP End-to-End System Tests', () => {
           assert.ok(compareRes.body.analysis.deltas);
 
           // 7. Event Search API
-          const searchRes = await request(liveApp).get(
+          const searchRes = await request(app).get(
             `/api/matches/${dbMatch.id}/events/search?types=FOUR,SIX&minimumImportance=HIGHLIGHT`
           );
           assert.equal(searchRes.status, 200);
@@ -887,7 +860,7 @@ describe('MVP End-to-End System Tests', () => {
           // 8. Player Analytics API
           if (dbMatch.players?.[0]?.player?.id) {
             const playerId = dbMatch.players[0].player.id;
-            const playerRes = await request(liveApp).get(
+            const playerRes = await request(app).get(
               `/api/matches/${dbMatch.id}/analytics/players/${playerId}`
             );
             assert.equal(playerRes.status, 200);
@@ -904,6 +877,8 @@ describe('MVP End-to-End System Tests', () => {
             await redisClient.quit();
           }
           await prisma.$disconnect();
+          activePrisma = mockPrisma;
+          activeStateCache = stateCache;
         }
       });
     }

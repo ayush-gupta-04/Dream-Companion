@@ -1,9 +1,7 @@
 import { Router } from 'express';
-import { createTimelineController } from '../controllers/timelineController.js';
+import { listTimeline } from '../controllers/timelineController.js';
 
-export function createTimelineRoutes(timelineService) {
-  const router = Router();
-  const controller = createTimelineController(timelineService);
-  router.get('/matches/:matchId/timeline', controller.list);
-  return router;
-}
+const router = Router();
+router.get('/matches/:matchId/timeline', listTimeline);
+
+export default router;

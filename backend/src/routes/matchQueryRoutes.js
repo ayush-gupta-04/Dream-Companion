@@ -1,8 +1,7 @@
 import { Router } from 'express';
-import { createMatchQueryController } from '../controllers/matchQueryController.js';
+import { queryMatch } from '../controllers/matchQueryController.js';
 
-export function createMatchQueryRoutes(matchQueryService) {
-  const router = Router();
-  router.post('/matches/:matchId/query', createMatchQueryController(matchQueryService));
-  return router;
-}
+const router = Router();
+router.post('/matches/:matchId/query', queryMatch);
+
+export default router;

@@ -1,7 +1,28 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import { createRecapService } from '../../src/modules/summaries/recapService.js';
+import { mock, test } from 'node:test';
+import { config } from '../../src/config/index.js';
 import { executeRecapTool } from '../../src/modules/summaries/recapToolExecutor.js';
+
+const prisma = {};
+let narrate;
+let runTool;
+mock.module('../../src/db/prisma.js', { exports: { prisma } });
+mock.module('../../src/modules/ai/geminiMatchQueryClient.js', {
+  exports: { narrateRecap: (request) => narrate(request) }
+});
+mock.module('../../src/modules/summaries/recapToolExecutor.js', {
+  exports: { executeRecapTool: (request) => runTool(request) }
+});
+const { join, leave, executeRecap } = await import('../../src/modules/summaries/recapService.js');
+
+function useRecapDependencies({ prisma: database, narrate: narrator, executeTool = executeRecapTool }) {
+  for (const key of Object.keys(prisma)) delete prisma[key];
+  Object.assign(prisma, database);
+  narrate = narrator;
+  runTool = executeTool;
+  config.gemini.apiKey = narrator ? 'test-key' : '';
+  return { join, leave, execute: executeRecap };
+}
 
 function storedDelivery({ sequence, over, runs = 0, wicket = false }) {
   return {
@@ -43,7 +64,7 @@ test('builds deterministic recap evidence before concise narration', async () =>
     storedDelivery({ sequence: 2, over: 0, runs: 4 }),
     storedDelivery({ sequence: 3, over: 1, runs: 6 })
   ];
-  const service = createRecapService({
+  const service = useRecapDependencies({
     prisma: {
       match: { findUnique: async () => ({ id: 'match-1', status: 'LIVE' }) },
       delivery: { findMany: async () => deliveries }
@@ -83,7 +104,7 @@ test('builds deterministic recap evidence before concise narration', async () =>
 });
 
 test('does not narrate a timestamp-less unavailable time window', async () => {
-  const service = createRecapService({
+  const service = useRecapDependencies({
     prisma: {
       match: { findUnique: async () => ({ id: 'match-1', status: 'LIVE' }) },
       delivery: { findMany: async () => [storedDelivery({ sequence: 1, over: 0 })] }
@@ -107,7 +128,7 @@ test('builds evidence for the just-ended completed over before narration', async
     storedDelivery({ sequence: 2, over: 0, runs: 4 }),
     storedDelivery({ sequence: 3, over: 1, runs: 6 })
   ];
-  const service = createRecapService({
+  const service = useRecapDependencies({
     prisma: {
       match: { findUnique: async () => ({ id: 'match-1', status: 'LIVE' }) },
       delivery: { findMany: async () => deliveries }
@@ -136,7 +157,7 @@ test('builds evidence for the just-ended completed over before narration', async
 
 test('rebuilds recap evidence after a corrected delivery instead of using a stale summary', async () => {
   let deliveries = [storedDelivery({ sequence: 1, over: 0, runs: 1 })];
-  const service = createRecapService({
+  const service = useRecapDependencies({
     prisma: {
       match: { findUnique: async () => ({ id: 'match-1', status: 'LIVE' }) },
       delivery: { findMany: async () => deliveries }
@@ -159,7 +180,7 @@ test('rebuilds recap evidence after a corrected delivery instead of using a stal
 
 test('creates a session marker at the latest stable match position', async () => {
   let created;
-  const service = createRecapService({
+  const service = useRecapDependencies({
     prisma: {
       match: { findUnique: async () => ({ id: 'match-1', status: 'LIVE' }) },
       delivery: {
@@ -199,7 +220,7 @@ test('creates a session marker at the latest stable match position', async () =>
 
 test("does not resolve another Clerk user's active session", async () => {
   let sessionLookup;
-  const service = createRecapService({
+  const service = useRecapDependencies({
     prisma: {
       matchSession: {
         findFirst: async ({ where }) => {

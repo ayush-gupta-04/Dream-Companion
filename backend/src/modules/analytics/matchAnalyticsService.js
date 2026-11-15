@@ -1,3 +1,4 @@
+import { prisma } from '../../db/prisma.js';
 import { formatOvers, isBowlerWicket } from '../match-intelligence/domain/scoring.js';
 
 function createExtras() {
@@ -104,7 +105,7 @@ export class AnalyticsValidationError extends Error {
   }
 }
 
-export async function analyzeOver(prisma, { matchId, inningsNumber, overNumber }) {
+export async function analyzeOver({ matchId, inningsNumber, overNumber }) {
   if (
     inningsNumber !== null &&
     inningsNumber !== undefined &&
@@ -188,7 +189,7 @@ export async function analyzeOver(prisma, { matchId, inningsNumber, overNumber }
   };
 }
 
-export async function analyzePlayer(prisma, { matchId, playerId }) {
+export async function analyzePlayer({ matchId, playerId }) {
   const match = await prisma.match.findUnique({
     where: { id: matchId },
     select: { ballsPerOver: true }
@@ -274,14 +275,14 @@ function numericDeltas(firstOver, secondOver) {
  * Compares two overs in the same innings from persisted delivery facts.
  * Deltas are always calculated as secondOver minus firstOver.
  */
-export async function compareOvers(prisma, { matchId, inningsNumber, over1, over2 }) {
+export async function compareOvers({ matchId, inningsNumber, over1, over2 }) {
   if (over1 === over2) {
     throw new AnalyticsValidationError('Choose two different overs to compare.');
   }
 
   const [firstOver, secondOver] = await Promise.all([
-    analyzeOver(prisma, { matchId, inningsNumber, overNumber: over1 }),
-    analyzeOver(prisma, { matchId, inningsNumber, overNumber: over2 })
+    analyzeOver({ matchId, inningsNumber, overNumber: over1 }),
+    analyzeOver({ matchId, inningsNumber, overNumber: over2 })
   ]);
 
   return {

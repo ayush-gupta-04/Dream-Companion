@@ -1,6 +1,31 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import { createMatchQueryService } from '../../src/modules/ai/matchQueryService.js';
+import { mock, test } from 'node:test';
+import { config } from '../../src/config/index.js';
+
+const prisma = {};
+let activeAi;
+let activeAnalysis;
+let activeRecap;
+mock.module('../../src/db/prisma.js', { exports: { prisma } });
+mock.module('../../src/modules/ai/geminiMatchQueryClient.js', {
+  exports: { selectTool: (request) => activeAi.selectTool(request) }
+});
+mock.module('../../src/modules/ai/askMatchService.js', {
+  exports: { executeAnalysis: (request) => activeAnalysis.execute(request) }
+});
+mock.module('../../src/modules/summaries/recapService.js', {
+  exports: { executeRecap: (request) => activeRecap.execute(request) }
+});
+const { queryMatch } = await import('../../src/modules/ai/matchQueryService.js');
+config.gemini.apiKey = 'test-key';
+
+function useQueryDependencies({ prisma: database, aiClient, analysisService, recapService }) {
+  Object.assign(prisma, database);
+  activeAi = aiClient;
+  activeAnalysis = analysisService;
+  activeRecap = recapService;
+  return { query: queryMatch };
+}
 
 function toolSelection(overrides) {
   return {
@@ -29,7 +54,7 @@ function createPrisma() {
 
 test('selects one analysis tool, executes it once, and normalizes the result', async () => {
   let recapCalled = false;
-  const service = createMatchQueryService({
+  const service = useQueryDependencies({
     prisma: createPrisma(),
     aiClient: {
       selectTool: async ({ query, players, sessionIdProvided }) => {
@@ -77,7 +102,7 @@ test('selects one analysis tool, executes it once, and normalizes the result', a
 
 test('selects one recap tool and preserves an unavailable deterministic window', async () => {
   let analysisCalled = false;
-  const service = createMatchQueryService({
+  const service = useQueryDependencies({
     prisma: createPrisma(),
     aiClient: {
       selectTool: async () =>
@@ -119,7 +144,7 @@ test('selects one recap tool and preserves an unavailable deterministic window',
 });
 
 test('differentiates between analyze last over (OVER_ANALYSIS) and summarize last over (LAST_OVER)', async () => {
-  const service = createMatchQueryService({
+  const service = useQueryDependencies({
     prisma: createPrisma(),
     aiClient: {
       selectTool: async ({ query }) => {
@@ -175,7 +200,7 @@ test('differentiates between analyze last over (OVER_ANALYSIS) and summarize las
 });
 
 test('does not execute a deterministic tool for unsupported requests', async () => {
-  const service = createMatchQueryService({
+  const service = useQueryDependencies({
     prisma: createPrisma(),
     aiClient: {
       selectTool: async () =>
@@ -197,7 +222,7 @@ test('does not execute a deterministic tool for unsupported requests', async () 
 
 test('does not ask the model about a match that does not exist', async () => {
   let selected = false;
-  const service = createMatchQueryService({
+  const service = useQueryDependencies({
     prisma: {
       match: { findUnique: async () => null },
       player: { findMany: async () => assert.fail('Unexpected player lookup') }

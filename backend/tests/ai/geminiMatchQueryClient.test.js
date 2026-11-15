@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createGeminiMatchQueryClient } from '../../src/modules/ai/geminiMatchQueryClient.js';
+import { config } from '../../src/config/index.js';
+import { AiUnavailableError } from '../../src/modules/ai/geminiClient.js';
+import { narrateRecap, selectTool } from '../../src/modules/ai/geminiMatchQueryClient.js';
 
 function toolSelection() {
   return {
@@ -46,18 +48,18 @@ test('selects a bounded shared tool and produces concise recap narration', async
   };
 
   try {
-    const client = createGeminiMatchQueryClient({
+    Object.assign(config.gemini, {
       apiKey: 'test-key',
       model: 'test-model',
       timeoutMs: 1000,
       maxOutputTokens: 100
     });
-    const tool = await client.selectTool({
+    const tool = await selectTool({
       query: 'Summarize the last 2 overs',
       players: [{ id: 'player-1', displayName: 'Player One' }],
       sessionIdProvided: false
     });
-    const recap = await client.narrateRecap({
+    const recap = await narrateRecap({
       query: 'Summarize the last 2 overs',
       evidence: { totals: { runs: 12 } }
     });
@@ -87,7 +89,10 @@ test('selects a bounded shared tool and produces concise recap narration', async
   }
 });
 
-test('returns no shared query client when Gemini is not configured', () => {
-  assert.equal(createGeminiMatchQueryClient({ apiKey: '' }), null);
-  assert.equal(createGeminiMatchQueryClient(null), null);
+test('rejects shared query calls when Gemini is not configured', async () => {
+  config.gemini.apiKey = '';
+  await assert.rejects(
+    () => selectTool({ query: 'Analyze first over', players: [], sessionIdProvided: false }),
+    AiUnavailableError
+  );
 });

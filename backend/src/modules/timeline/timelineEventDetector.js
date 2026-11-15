@@ -130,15 +130,7 @@ export function eventForCompletedOver(group, completedGroups) {
  * Detects events that occur on a single delivery (boundaries, wickets,
  * and batter/partnership milestones). Pure function shared by full sync and fast path.
  */
-export function detectSingleDeliveryEvents({
-  delivery,
-  previousBatterRuns = 0,
-  updatedBatterRuns = previousBatterRuns + delivery.batterRuns,
-  previousPartnershipRuns = 0,
-  updatedPartnershipRuns = previousPartnershipRuns + delivery.totalRuns,
-  partnershipStartDeliveryId = delivery.id,
-  partnershipPlayers = pairFor(delivery)
-}) {
+export function detectBoundaryAndWicketEvents(delivery) {
   const events = [];
 
   if (delivery.batterRuns === 4) {
@@ -182,8 +174,14 @@ export function detectSingleDeliveryEvents({
     );
   }
 
+  return events;
+}
+
+export function detectBatterMilestoneEvents({ delivery, previousRuns, updatedRuns }) {
+  const events = [];
+
   for (const milestone of BATTER_MILESTONES) {
-    if (previousBatterRuns < milestone && updatedBatterRuns >= milestone) {
+    if (previousRuns < milestone && updatedRuns >= milestone) {
       events.push(
         eventFromDelivery(delivery, {
           eventKey: `batter-milestone:${delivery.inningsId}:${delivery.batter.id}:${milestone}`,
@@ -197,8 +195,21 @@ export function detectSingleDeliveryEvents({
     }
   }
 
-  for (const milestone of PARTNERSHIP_MILESTONES) {
-    if (previousPartnershipRuns < milestone && updatedPartnershipRuns >= milestone) {
+  return events;
+}
+
+export function detectPartnershipMilestoneEvents({
+  delivery,
+  previousRuns,
+  updatedRuns,
+  partnershipStartDeliveryId = delivery.id,
+  partnershipPlayers = pairFor(delivery),
+  milestones = PARTNERSHIP_MILESTONES
+}) {
+  const events = [];
+
+  for (const milestone of milestones) {
+    if (previousRuns < milestone && updatedRuns >= milestone) {
       const names = partnershipPlayers.map((player) => player.displayName).join(' and ');
       events.push(
         eventFromDelivery(delivery, {
@@ -214,6 +225,32 @@ export function detectSingleDeliveryEvents({
   }
 
   return events;
+}
+
+export function detectSingleDeliveryEvents({
+  delivery,
+  previousBatterRuns = 0,
+  updatedBatterRuns = previousBatterRuns + delivery.batterRuns,
+  previousPartnershipRuns = 0,
+  updatedPartnershipRuns = previousPartnershipRuns + delivery.totalRuns,
+  partnershipStartDeliveryId = delivery.id,
+  partnershipPlayers = pairFor(delivery)
+}) {
+  return [
+    ...detectBoundaryAndWicketEvents(delivery),
+    ...detectBatterMilestoneEvents({
+      delivery,
+      previousRuns: previousBatterRuns,
+      updatedRuns: updatedBatterRuns
+    }),
+    ...detectPartnershipMilestoneEvents({
+      delivery,
+      previousRuns: previousPartnershipRuns,
+      updatedRuns: updatedPartnershipRuns,
+      partnershipStartDeliveryId,
+      partnershipPlayers
+    })
+  ];
 }
 
 /**

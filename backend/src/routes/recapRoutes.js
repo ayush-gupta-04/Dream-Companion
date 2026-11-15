@@ -1,10 +1,8 @@
 import { Router } from 'express';
-import { createRecapController } from '../controllers/recapController.js';
+import { join, leave } from '../controllers/recapController.js';
 
-export function createRecapRoutes(recapService) {
-  const router = Router();
-  const controller = createRecapController(recapService);
-  router.post('/matches/:matchId/sessions/join', controller.join);
-  router.post('/matches/:matchId/sessions/leave', controller.leave);
-  return router;
-}
+const router = Router();
+router.post('/matches/:matchId/sessions/join', join);
+router.post('/matches/:matchId/sessions/leave', leave);
+
+export default router;

@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import {
+import { mock, test } from 'node:test';
+
+const prismaClient = {};
+mock.module('../../src/db/prisma.js', { exports: { prisma: prismaClient } });
+const {
   EventSearchValidationError,
   searchMatchEvents
-} from '../../src/modules/timeline/eventSearchService.js';
+} = await import('../../src/modules/timeline/eventSearchService.js');
 
 function timelineRecord({ id, type, sequence, importance = 'HIGHLIGHT' }) {
   return {
@@ -42,7 +45,8 @@ test('searches stored timeline events with factual filters and cursor pagination
     }
   };
 
-  const result = await searchMatchEvents(prisma, {
+  Object.assign(prismaClient, prisma);
+  const result = await searchMatchEvents({
     matchId: 'match-1',
     inningsNumber: 1,
     types: ['WICKET'],
@@ -72,7 +76,7 @@ test('searches stored timeline events with factual filters and cursor pagination
 
 test('requires innings for a delivery sequence event filter', async () => {
   await assert.rejects(
-    searchMatchEvents({}, { matchId: 'match-1', startSequence: 1 }),
+    searchMatchEvents({ matchId: 'match-1', startSequence: 1 }),
     EventSearchValidationError
   );
 });

@@ -1,11 +1,9 @@
 import { Router } from 'express';
-import { createAnalyticsController } from '../controllers/analyticsController.js';
+import { comparison, over, player } from '../controllers/analyticsController.js';
 
-export function createAnalyticsRoutes(prisma) {
-  const router = Router();
-  const controller = createAnalyticsController(prisma);
-  router.get('/matches/:matchId/analytics/overs/compare', controller.comparison);
-  router.get('/matches/:matchId/analytics/overs/:overNumber', controller.over);
-  router.get('/matches/:matchId/analytics/players/:playerId', controller.player);
-  return router;
-}
+const router = Router();
+router.get('/matches/:matchId/analytics/overs/compare', comparison);
+router.get('/matches/:matchId/analytics/overs/:overNumber', over);
+router.get('/matches/:matchId/analytics/players/:playerId', player);
+
+export default router;

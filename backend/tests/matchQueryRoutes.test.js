@@ -1,21 +1,22 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import request from 'supertest';
-import { createApp } from '../src/app.js';
+
+let query;
+mock.module('../src/modules/ai/matchQueryService.js', {
+  exports: { queryMatch: (request) => query(request) }
+});
+const { default: app } = await import('../src/app.js');
 
 test('POST /api/matches/:matchId/query validates the shared contract and returns its result', async () => {
-  const app = createApp({
-    matchQueryService: {
-      query: async ({ matchId, request: queryRequest }) => ({
-        kind: 'ANALYSIS',
-        tool: 'OVER_ANALYSIS',
-        answer: { headline: queryRequest.query, body: matchId, bullets: [] },
-        evidence: null,
-        references: [],
-        window: null,
-        limitations: []
-      })
-    }
+  query = async ({ matchId, request: queryRequest }) => ({
+    kind: 'ANALYSIS',
+    tool: 'OVER_ANALYSIS',
+    answer: { headline: queryRequest.query, body: matchId, bullets: [] },
+    evidence: null,
+    references: [],
+    window: null,
+    limitations: []
   });
 
   const valid = await request(app)
@@ -34,7 +35,6 @@ test('POST /api/matches/:matchId/query validates the shared contract and returns
 });
 
 test('retired Ask and Catch Me Up query routes are not registered', async () => {
-  const app = createApp();
 
   const ask = await request(app)
     .post('/api/matches/match-1/ask')

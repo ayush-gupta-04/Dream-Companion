@@ -32,6 +32,7 @@
 - [Design Decisions & Scope Boundaries](#-design-decisions--scope-boundaries)
 - [Technology Stack](#-technology-stack)
 - [Project Directory Structure](#-project-directory-structure)
+- [Backend Development Quick Map](#-backend-development-quick-map)
 - [Getting Started](#-getting-started)
   - [Prerequisites](#prerequisites)
   - [1. Clone Repository & Install Dependencies](#1-clone-repository--install-dependencies)
@@ -315,6 +316,36 @@ DreamCompanion-2/
 │
 └── README.md                      # Project documentation (this file)
 ```
+
+---
+
+## 🔧 Backend Development Quick Map
+
+The backend follows a simple request path:
+
+```text
+src/server.js → src/app.js → routes → controllers → modules → Prisma
+```
+
+- `src/server.js` starts HTTP, Socket.IO, Redis, and archive bootstrapping.
+- `src/app.js` configures middleware and mounts API routers.
+- `src/routes/` maps endpoints to controllers.
+- `src/controllers/` handles HTTP input and responses.
+- `src/modules/` contains feature-specific business logic; `src/db/prisma.js` provides the shared database client.
+- Modules import the shared Prisma, Redis, and Socket.IO instances and direct AI functions. The server owns connection startup and shutdown.
+- Delivery repository functions accept a Prisma transaction client when a multi-step write must stay atomic.
+
+For local backend development:
+
+```powershell
+cd backend
+npm install
+docker compose up -d postgres redis
+npm run db:deploy
+npm run dev
+```
+
+Useful checks are `npm run lint`, `npm test`, and `npm run test:db` (the last requires local PostgreSQL and Redis).
 
 ---
 

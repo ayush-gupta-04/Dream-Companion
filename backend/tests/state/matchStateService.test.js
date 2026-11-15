@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
-import { buildMatchState } from '../../src/modules/match-intelligence/state/matchStateService.js';
+import { describe, mock, test } from 'node:test';
+
+let activePrisma;
+const prisma = { match: { findUnique: (...args) => activePrisma.match.findUnique(...args) } };
+mock.module('../../src/db/prisma.js', { exports: { prisma } });
+const { buildMatchState } =
+  await import('../../src/modules/match-intelligence/state/matchStateService.js');
 
 describe('buildMatchState', () => {
   test('returns null when match does not exist', async () => {
@@ -10,7 +15,8 @@ describe('buildMatchState', () => {
       }
     };
 
-    const state = await buildMatchState(mockPrisma, 'non-existent');
+    activePrisma = mockPrisma;
+    const state = await buildMatchState('non-existent');
     assert.equal(state, null);
   });
 
@@ -71,7 +77,8 @@ describe('buildMatchState', () => {
       }
     };
 
-    const state = await buildMatchState(mockPrisma, 'match-1');
+    activePrisma = mockPrisma;
+    const state = await buildMatchState('match-1');
 
     assert.equal(state.matchId, 'match-1');
     assert.equal(state.currentInnings.inningsNumber, 1);
@@ -161,7 +168,8 @@ describe('buildMatchState', () => {
       }
     };
 
-    const state = await buildMatchState(mockPrisma, 'match-1');
+    activePrisma = mockPrisma;
+    const state = await buildMatchState('match-1');
 
     assert.equal(state.currentInnings.inningsNumber, 2);
     assert.equal(state.currentInnings.battingTeam, 'Sri Lanka');
@@ -201,7 +209,8 @@ describe('buildMatchState', () => {
       }
     };
 
-    const state = await buildMatchState(mockPrisma, 'match-1');
+    activePrisma = mockPrisma;
+    const state = await buildMatchState('match-1');
 
     assert.equal(state.currentInnings.inningsNumber, 1);
     assert.equal(state.currentInnings.battingTeam, 'Australia');
