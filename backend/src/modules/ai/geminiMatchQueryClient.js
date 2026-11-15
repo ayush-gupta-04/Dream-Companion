@@ -100,7 +100,7 @@ export function createGeminiMatchQueryClient(config) {
         schema: analysisNarrationSchema,
         responseSchema: analysisNarrationResponseSchema,
         systemInstruction:
-          'Explain the verified cricket evidence concisely. Treat the evidence as the only source of facts. Do not invent figures, events, player names, chronology, or video availability.',
+          'Explain the verified cricket evidence in detailed bullet points. Treat the evidence as the only source of facts. Do not invent figures, events, player names, chronology, or video availability.',
         prompt: JSON.stringify({ query, facts })
       });
     },
@@ -110,7 +110,7 @@ export function createGeminiMatchQueryClient(config) {
         schema: recapNarrationSchema,
         responseSchema: recapNarrationResponseSchema,
         systemInstruction:
-          'Write a short cricket recap from verified evidence only. Return a concise summary and three to five short factual bullets. Do not invent scores, events, player names, chronology, timestamps, turning points, or video support.',
+          'Write a short cricket recap from verified evidence only. Return a short summary and four to six short factual bullet points. Do not invent scores, events, player names, chronology, timestamps, turning points, or video support.',
         prompt: JSON.stringify({ query, evidence })
       });
     }

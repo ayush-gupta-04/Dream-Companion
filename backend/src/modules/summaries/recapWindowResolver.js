@@ -30,8 +30,7 @@ function createWindowFromDeliveries(type, selected, options = {}) {
 }
 
 function createWindow(type, deliveries, startIndex, endIndex, options = {}) {
-  const selected =
-    startIndex < 0 || startIndex > endIndex ? [] : deliveries.slice(startIndex, endIndex + 1);
+  const selected = startIndex < 0 || startIndex > endIndex ? [] : deliveries.slice(startIndex, endIndex + 1);
   return createWindowFromDeliveries(type, selected, options);
 }
 
@@ -116,11 +115,11 @@ function afterSessionMarker(delivery, session) {
   );
 }
 
-/**
- * Resolves a recap scope from already ordered, provider-neutral deliveries.
- * Display labels are returned for navigation only; they are never used to
- * establish ordering or an over's completion.
- */
+
+
+// The Main Method : 
+// It build the window accoring to the TOOL selected!
+
 export function resolveRecapWindow({ matchStatus, deliveries, request, session }) {
   if (request.window === 'WHOLE_MATCH') {
     return createWindow(request.window, deliveries, 0, deliveries.length - 1);

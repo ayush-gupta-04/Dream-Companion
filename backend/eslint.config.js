@@ -8,13 +8,7 @@ export default [
       ecmaVersion: 'latest',
       sourceType: 'module',
       globals: {
-        ...globals.node,
-        ...globals.browser
-      },
-      parserOptions: {
-        ecmaFeatures: {
-          jsx: true
-        }
+        ...globals.node
       }
     },
     rules: {
@@ -24,11 +18,10 @@ export default [
   {
     ignores: [
       '**/node_modules/**',
-      '**/dist/**',
       '**/coverage/**',
       '**/postgres_data/**',
-      '**/redis_data/**'
+      '**/redis_data/**',
+      '**/t20s_male_json/**'
     ]
   }
 ];
-

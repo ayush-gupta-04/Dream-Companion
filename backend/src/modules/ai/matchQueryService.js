@@ -67,6 +67,10 @@ async function requireMatch(prisma, matchId) {
   return match;
 }
 
+
+
+// Main method
+// This is the entry point of the Query Request.
 export function createMatchQueryService({ prisma, aiClient, analysisService, recapService }) {
   return {
     async query({ matchId, request, viewer }) {
@@ -78,6 +82,8 @@ export function createMatchQueryService({ prisma, aiClient, analysisService, rec
         select: { id: true, displayName: true },
         orderBy: { displayName: 'asc' }
       });
+
+      // It will select the tool from the query.
       const tool = matchQueryToolSchema.parse(
         await aiClient.selectTool({
           query: request.query,
@@ -89,9 +95,7 @@ export function createMatchQueryService({ prisma, aiClient, analysisService, rec
       if (tool.tool === 'UNSUPPORTED') return unsupportedResult();
 
       if (analysisToolTypes.includes(tool.tool)) {
-        return analysisResult(
-          await analysisService.execute({ matchId, query: request.query, tool })
-        );
+        return analysisResult(await analysisService.execute({ matchId, query: request.query, tool }));
       }
 
       if (recapWindowTypes.includes(tool.tool)) {

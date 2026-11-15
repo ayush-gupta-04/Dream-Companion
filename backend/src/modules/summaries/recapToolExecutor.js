@@ -1,10 +1,5 @@
 import { resolveRecapWindow } from './recapWindowResolver.js';
 
-/**
- * Runs one allow-listed recap tool against already fetched, ordered delivery
- * facts. The LLM selects the tool and its bounded arguments; it never selects
- * deliveries itself.
- */
 export function executeRecapTool({ tool, matchStatus, deliveries, session }) {
   const request = toWindowRequest({ tool, sessionId: session?.id });
   return resolveRecapWindow({ matchStatus, deliveries, request, session });

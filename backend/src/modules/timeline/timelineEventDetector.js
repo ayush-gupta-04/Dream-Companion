@@ -53,7 +53,7 @@ function bowlerConceded(deliveries) {
   );
 }
 
-function eventForCompletedOver(group, completedGroups) {
+export function eventForCompletedOver(group, completedGroups) {
   const anchor = group.deliveries.at(-1);
   const runs = group.deliveries.reduce((total, delivery) => total + delivery.totalRuns, 0);
   const conceded = bowlerConceded(group.deliveries);
@@ -127,6 +127,96 @@ function eventForCompletedOver(group, completedGroups) {
 }
 
 /**
+ * Detects events that occur on a single delivery (boundaries, wickets,
+ * and batter/partnership milestones). Pure function shared by full sync and fast path.
+ */
+export function detectSingleDeliveryEvents({
+  delivery,
+  previousBatterRuns = 0,
+  updatedBatterRuns = previousBatterRuns + delivery.batterRuns,
+  previousPartnershipRuns = 0,
+  updatedPartnershipRuns = previousPartnershipRuns + delivery.totalRuns,
+  partnershipStartDeliveryId = delivery.id,
+  partnershipPlayers = pairFor(delivery)
+}) {
+  const events = [];
+
+  if (delivery.batterRuns === 4) {
+    events.push(
+      eventFromDelivery(delivery, {
+        eventKey: `delivery:${delivery.id}:four`,
+        eventOrder: 10,
+        type: 'FOUR',
+        title: `Four by ${delivery.batter.displayName}`,
+        description: `${delivery.batter.displayName} hit four at ${delivery.displayBallLabel}.`,
+        ...importance(35, 'MINOR')
+      })
+    );
+  }
+
+  if (delivery.batterRuns === 6) {
+    events.push(
+      eventFromDelivery(delivery, {
+        eventKey: `delivery:${delivery.id}:six`,
+        eventOrder: 10,
+        type: 'SIX',
+        title: `Six by ${delivery.batter.displayName}`,
+        description: `${delivery.batter.displayName} hit six at ${delivery.displayBallLabel}.`,
+        ...importance(55, 'HIGHLIGHT')
+      })
+    );
+  }
+
+  for (const [wicketIndex, wicket] of (delivery.wickets ?? []).entries()) {
+    if (!wicket.countsAsWicket) continue;
+    const wicketSequence = wicket.wicketSequence ?? wicketIndex + 1;
+    events.push(
+      eventFromDelivery(delivery, {
+        eventKey: `delivery:${delivery.id}:wicket:${wicketSequence}`,
+        eventOrder: 20 + wicketSequence,
+        type: 'WICKET',
+        title: `Wicket — ${wicket.playerOut.displayName}`,
+        description: `${wicket.playerOut.displayName} was dismissed ${wicket.kind} at ${delivery.displayBallLabel}.`,
+        ...importance(90, 'MAJOR')
+      })
+    );
+  }
+
+  for (const milestone of BATTER_MILESTONES) {
+    if (previousBatterRuns < milestone && updatedBatterRuns >= milestone) {
+      events.push(
+        eventFromDelivery(delivery, {
+          eventKey: `batter-milestone:${delivery.inningsId}:${delivery.batter.id}:${milestone}`,
+          eventOrder: 30 + milestone / 50,
+          type: 'BATTER_MILESTONE',
+          title: `${milestone} for ${delivery.batter.displayName}`,
+          description: `${delivery.batter.displayName} reached ${milestone} runs at ${delivery.displayBallLabel}.`,
+          ...importance(milestone === 100 ? 90 : 70, milestone === 100 ? 'MAJOR' : 'HIGHLIGHT')
+        })
+      );
+    }
+  }
+
+  for (const milestone of PARTNERSHIP_MILESTONES) {
+    if (previousPartnershipRuns < milestone && updatedPartnershipRuns >= milestone) {
+      const names = partnershipPlayers.map((player) => player.displayName).join(' and ');
+      events.push(
+        eventFromDelivery(delivery, {
+          eventKey: `partnership-milestone:${partnershipStartDeliveryId}:${milestone}`,
+          eventOrder: 40 + milestone / 50,
+          type: 'PARTNERSHIP_MILESTONE',
+          title: `${milestone}-run partnership`,
+          description: `${names} added ${milestone} runs together at ${delivery.displayBallLabel}.`,
+          ...importance(milestone === 100 ? 85 : 65, milestone === 100 ? 'MAJOR' : 'HIGHLIGHT')
+        })
+      );
+    }
+  }
+
+  return events;
+}
+
+/**
  * Produces notable events from one ordered innings. It uses stable delivery
  * sequence for chronology and never treats a display label as an identifier.
  */
@@ -136,63 +226,9 @@ export function detectTimelineEvents({ deliveries, isInningsComplete }) {
   let activePartnership = null;
 
   for (const delivery of deliveries) {
-    if (delivery.batterRuns === 4) {
-      events.push(
-        eventFromDelivery(delivery, {
-          eventKey: `delivery:${delivery.id}:four`,
-          eventOrder: 10,
-          type: 'FOUR',
-          title: `Four by ${delivery.batter.displayName}`,
-          description: `${delivery.batter.displayName} hit four at ${delivery.displayBallLabel}.`,
-          ...importance(35, 'MINOR')
-        })
-      );
-    }
-    if (delivery.batterRuns === 6) {
-      events.push(
-        eventFromDelivery(delivery, {
-          eventKey: `delivery:${delivery.id}:six`,
-          eventOrder: 10,
-          type: 'SIX',
-          title: `Six by ${delivery.batter.displayName}`,
-          description: `${delivery.batter.displayName} hit six at ${delivery.displayBallLabel}.`,
-          ...importance(55, 'HIGHLIGHT')
-        })
-      );
-    }
-
-    for (const [wicketIndex, wicket] of delivery.wickets.entries()) {
-      if (!wicket.countsAsWicket) continue;
-      const wicketSequence = wicket.wicketSequence ?? wicketIndex + 1;
-      events.push(
-        eventFromDelivery(delivery, {
-          eventKey: `delivery:${delivery.id}:wicket:${wicketSequence}`,
-          eventOrder: 20 + wicketSequence,
-          type: 'WICKET',
-          title: `Wicket — ${wicket.playerOut.displayName}`,
-          description: `${wicket.playerOut.displayName} was dismissed ${wicket.kind} at ${delivery.displayBallLabel}.`,
-          ...importance(90, 'MAJOR')
-        })
-      );
-    }
-
     const previousBatterRuns = batterRuns.get(delivery.batter.id) ?? 0;
     const updatedBatterRuns = previousBatterRuns + delivery.batterRuns;
     batterRuns.set(delivery.batter.id, updatedBatterRuns);
-    for (const milestone of BATTER_MILESTONES) {
-      if (previousBatterRuns < milestone && updatedBatterRuns >= milestone) {
-        events.push(
-          eventFromDelivery(delivery, {
-            eventKey: `batter-milestone:${delivery.inningsId}:${delivery.batter.id}:${milestone}`,
-            eventOrder: 30 + milestone / 50,
-            type: 'BATTER_MILESTONE',
-            title: `${milestone} for ${delivery.batter.displayName}`,
-            description: `${delivery.batter.displayName} reached ${milestone} runs at ${delivery.displayBallLabel}.`,
-            ...importance(milestone === 100 ? 90 : 70, milestone === 100 ? 'MAJOR' : 'HIGHLIGHT')
-          })
-        );
-      }
-    }
 
     const pair = pairFor(delivery);
     const pairKey = pair.map((player) => player.id).join(':');
@@ -206,21 +242,18 @@ export function detectTimelineEvents({ deliveries, isInningsComplete }) {
     }
     const previousPartnershipRuns = activePartnership.runs;
     activePartnership.runs += delivery.totalRuns;
-    for (const milestone of PARTNERSHIP_MILESTONES) {
-      if (previousPartnershipRuns < milestone && activePartnership.runs >= milestone) {
-        const names = activePartnership.players.map((player) => player.displayName).join(' and ');
-        events.push(
-          eventFromDelivery(delivery, {
-            eventKey: `partnership-milestone:${activePartnership.startDeliveryId}:${milestone}`,
-            eventOrder: 40 + milestone / 50,
-            type: 'PARTNERSHIP_MILESTONE',
-            title: `${milestone}-run partnership`,
-            description: `${names} added ${milestone} runs together at ${delivery.displayBallLabel}.`,
-            ...importance(milestone === 100 ? 85 : 65, milestone === 100 ? 'MAJOR' : 'HIGHLIGHT')
-          })
-        );
-      }
-    }
+
+    events.push(
+      ...detectSingleDeliveryEvents({
+        delivery,
+        previousBatterRuns,
+        updatedBatterRuns,
+        previousPartnershipRuns,
+        updatedPartnershipRuns: activePartnership.runs,
+        partnershipStartDeliveryId: activePartnership.startDeliveryId,
+        partnershipPlayers: activePartnership.players
+      })
+    );
   }
 
   const completedGroups = [];

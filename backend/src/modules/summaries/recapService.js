@@ -80,6 +80,11 @@ async function requireActiveSession(prisma, matchId, sessionId, clerkUserId) {
 
 export function createRecapService({ prisma, narrate, executeTool = executeRecapTool }) {
   return {
+
+    // We are joining a session.
+    // Very important for SINCE_SESSION_JOIN.
+    // It maintains .. Marker for every person.
+    // Marker : inningsNumber, deliverySequence
     async join({ matchId, viewer }) {
       const { userId, sessionId } = requireViewer(viewer);
       await requireMatch(prisma, matchId);
@@ -144,9 +149,9 @@ export function createRecapService({ prisma, narrate, executeTool = executeRecap
         overs: tool.overs
       });
 
-      if (intent.tool === 'SINCE_SESSION_JOIN' && !request.sessionId) {
-        throw new RecapValidationError('Join the match before asking what you missed.');
-      }
+      if (intent.tool === 'SINCE_SESSION_JOIN' && !request.sessionId) {throw new RecapValidationError('Join the match before asking what you missed.');}
+      
+      
       const authenticatedViewer = intent.tool === 'SINCE_SESSION_JOIN' ? requireViewer(viewer) : viewer;
       const session =
         intent.tool === 'SINCE_SESSION_JOIN'
@@ -157,11 +162,17 @@ export function createRecapService({ prisma, narrate, executeTool = executeRecap
               authenticatedViewer.userId
             )
           : null;
+
+
+
+    // Find all the Deliveries of the match !
       const deliveries = await prisma.delivery.findMany({
         where: { innings: { matchId } },
         include: deliveryInclude,
         orderBy: [{ innings: { inningsNumber: 'asc' } }, { deliverySequence: 'asc' }]
       });
+
+      // Build the window .. according to the TOOL.
       const window = executeTool({
         tool: intent,
         matchStatus: match.status,
@@ -180,11 +191,15 @@ export function createRecapService({ prisma, narrate, executeTool = executeRecap
       }
       if (window.deliveries.length === 0) return { tool: intent.tool, ...emptyResult(window) };
 
+
+      // Now i have a window, we will create evidence (aggregated result from the window).
       const evidence = buildRecapEvidence({
         matchId,
         deliveries: window.deliveries,
         window
       });
+
+      // The LLM will narrate the evidence.
       const narration = await narrate({
         query: request.query,
         evidence: recapNarrationContext(evidence)

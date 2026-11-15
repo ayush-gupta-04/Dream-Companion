@@ -103,3 +103,90 @@ test('returns a stable, compact timeline response', async () => {
     display: { overNumber: 0, ballLabel: '0.1' }
   });
 });
+
+test('recordDelivery fast-path creates a FOUR event for a boundary without full match query', async () => {
+  const delivery = createDelivery(4);
+  let upsertedData = null;
+  const prismaMock = {
+    delivery: {
+      findUnique: async () => delivery,
+      aggregate: async () => ({ _sum: { batterRuns: 4, totalRuns: 4 } }),
+      findFirst: async () => null,
+      count: async () => 1
+    },
+    innings: {
+      findUnique: async () => ({ inningsNumber: 1 })
+    },
+    timelineEvent: {
+      upsert: async ({ create }) => {
+        upsertedData = { id: 'event-created-1', ...create };
+        return upsertedData;
+      }
+    }
+  };
+
+  const service = createTimelineService({ prisma: prismaMock });
+  const result = await service.recordDelivery({
+    matchId: 'match-1',
+    deliveryId: 'delivery-1',
+    action: 'created'
+  });
+
+  assert.equal(result.created.length, 1);
+  assert.equal(result.created[0].type, 'FOUR');
+  assert.equal(result.created[0].title, 'Four by Batter One');
+  assert.equal(upsertedData.eventKey, 'delivery:delivery-1:four');
+});
+
+test('recordDelivery fast-path returns empty changes on a dot ball without creating events', async () => {
+  const delivery = createDelivery(0);
+  delivery.isLegalDelivery = true;
+  const prismaMock = {
+    delivery: {
+      findUnique: async () => delivery,
+      aggregate: async () => ({ _sum: { batterRuns: 0, totalRuns: 0 } }),
+      findFirst: async () => null,
+      count: async () => 2
+    },
+    innings: {
+      findUnique: async () => ({ inningsNumber: 1 })
+    },
+    timelineEvent: {
+      upsert: async () => {
+        throw new Error('Should not upsert on dot ball');
+      }
+    }
+  };
+
+  const service = createTimelineService({ prisma: prismaMock });
+  const result = await service.recordDelivery({
+    matchId: 'match-1',
+    deliveryId: 'delivery-1',
+    action: 'created'
+  });
+
+  assert.equal(result.created.length, 0);
+  assert.equal(result.updated.length, 0);
+  assert.equal(result.deleted.length, 0);
+});
+
+test('recordDelivery falls back to synchronizeMatch when action is corrected', async () => {
+  let syncCalled = false;
+  const service = createTimelineService({
+    prisma: {
+      $transaction: async () => {
+        syncCalled = true;
+        return { created: [], updated: [{ id: 'updated-1' }], deleted: [] };
+      }
+    }
+  });
+
+  const result = await service.recordDelivery({
+    matchId: 'match-1',
+    deliveryId: 'delivery-1',
+    action: 'corrected'
+  });
+
+  assert.equal(syncCalled, true);
+  assert.equal(result.updated.length, 1);
+});

@@ -2,7 +2,6 @@
 node_modules/
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log*
 pnpm-debug.log*
 
 # Environment files
@@ -11,9 +10,7 @@ pnpm-debug.log*
 .env.*.local
 !.env.example
 
-# Build outputs
-dist/
-build/
+# Test & coverage
 coverage/
 
 # Database / local volumes
@@ -28,4 +25,3 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
-

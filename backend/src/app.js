@@ -64,10 +64,11 @@ export function createApp({
       liveSourceMatchId: config.replay.liveFileName.replace(/\.json$/i, ''),
       defaultIntervalMs: config.replay.deliveryIntervalMs
     });
+
   app.use(
     '/api',
-    createMatchRoutes({ stateCache, prismaClient, liveReplayManager: activeLiveReplayManager })
-  );
+    createMatchRoutes({ stateCache, prismaClient, liveReplayManager: activeLiveReplayManager }));
+    
   app.use('/api', createAnalyticsRoutes(prismaClient));
   const queryAiClient = createGeminiMatchQueryClient(config.gemini);
   const activeRecapService =

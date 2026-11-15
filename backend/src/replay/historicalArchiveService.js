@@ -9,6 +9,7 @@ import { clearMatchSimulationData } from './matchSimulationDataService.js';
 function resolveArchiveDirectory(dataDirectory) {
   const candidates = [
     path.resolve(process.cwd(), dataDirectory),
+    path.resolve(process.cwd(), 'backend', dataDirectory),
     path.resolve(process.cwd(), '..', dataDirectory)
   ];
 

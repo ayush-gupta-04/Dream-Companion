@@ -54,10 +54,13 @@ export async function replayCricsheetFile({
     `[Replay] Total innings: ${preparedMatch.innings.length} | Total deliveries: ${totalDeliveries} | Interval: ${intervalMs}ms`
   );
 
+  // Change Match state to LIVE.
   await prisma.match.update({ where: { id: preparedMatch.match.id }, data: { status: 'LIVE' } });
   if (io) {
     publishMatchStatus(io, preparedMatch.match.id, 'LIVE');
   }
+
+
 
   const initialState = await buildMatchState(prisma, preparedMatch.match.id);
   if (stateCache && typeof stateCache.set === 'function') {
@@ -79,6 +82,8 @@ export async function replayCricsheetFile({
       `[Replay] --- Starting Innings ${innings.inningsNumber} (${innings.deliveries.length} deliveries) ---`
     );
 
+
+    // Processing every Deliveries one by one.
     for (const delivery of innings.deliveries) {
       if (signal?.aborted) {
         console.log('[Replay] Simulation stopped.');
@@ -86,6 +91,7 @@ export async function replayCricsheetFile({
       }
 
       processedCount += 1;
+      // Save the delivery to the DB.
       const result = await processDelivery(prisma, { inningsId: innings.id, delivery });
 
       if (onProgress) {
@@ -112,19 +118,28 @@ export async function replayCricsheetFile({
         `[Replay] Inn ${innings.inningsNumber} | Over ${delivery.display.ballLabel} | ${runsInfo}${extrasInfo} | Action: ${result.action}`
       );
 
-      const state = await buildMatchState(prisma, preparedMatch.match.id);
-      if (stateCache && typeof stateCache.set === 'function') {
+
+      const state = await buildMatchState(prisma, preparedMatch.match.id);  // saving the current match state to DB
+      if (stateCache && typeof stateCache.set === 'function') {  // saving the current match state to REDIS
         await stateCache.set(preparedMatch.match.id, state);
       }
-
+      // Publish the current match state.
       if (io) {
         publishDeliveryUpdate(io, preparedMatch.match.id, result.action, result.record, state);
       }
 
+
+      // Creating the Timeline Events (Fast-path per delivery).
       if (timelineService) {
-        const timelineChanges = await timelineService.synchronizeMatch({
-          matchId: preparedMatch.match.id
-        });
+        const timelineChanges =
+          typeof timelineService.recordDelivery === 'function'
+            ? await timelineService.recordDelivery({
+                matchId: preparedMatch.match.id,
+                deliveryId: result.record.id,
+                action: result.action
+              })
+            : await timelineService.synchronizeMatch({ matchId: preparedMatch.match.id });
+
         if (io) {
           publishTimelineChanges(io, timelineChanges);
         }
