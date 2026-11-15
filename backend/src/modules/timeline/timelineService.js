@@ -16,50 +16,39 @@ const deliveryInclude = {
   }
 };
 
-const eventFields = [
-  'inningsId',
-  'deliveryId',
-  'deliverySequence',
-  'eventOrder',
-  'displayOver',
-  'displayBallLabel',
-  'type',
-  'eventKey',
-  'title',
-  'description',
-  'importanceScore',
-  'importanceLevel',
-  'occurredAt'
-];
-
 function sameTime(left, right) {
-  if (left === null && right === null) return true;
+  if (!left && !right) return true;
   if (!left || !right) return false;
   return new Date(left).getTime() === new Date(right).getTime();
 }
 
-function eventData(matchId, event) {
-  return Object.fromEntries([
-    ['matchId', matchId],
-    ...eventFields.map((field) => [field, event[field]])
-  ]);
+function toEventData(matchId, event) {
+  return {
+    matchId,
+    inningsId: event.inningsId,
+    deliveryId: event.deliveryId,
+    deliverySequence: event.deliverySequence,
+    eventOrder: event.eventOrder,
+    displayOver: event.displayOver,
+    displayBallLabel: event.displayBallLabel,
+    type: event.type,
+    eventKey: event.eventKey,
+    title: event.title,
+    description: event.description,
+    importanceScore: event.importanceScore,
+    importanceLevel: event.importanceLevel,
+    occurredAt: event.occurredAt
+  };
 }
 
 function eventChanged(existing, desired) {
-  return eventFields.some((field) => {
-    if (field === 'occurredAt') return !sameTime(existing[field], desired[field]);
-    return existing[field] !== desired[field];
-  });
-}
-
-function assertUniqueEventKeys(events) {
-  const keys = new Set();
-  for (const event of events) {
-    if (keys.has(event.eventKey)) {
-      throw new Error(`Timeline detector produced a duplicate event key: ${event.eventKey}`);
-    }
-    keys.add(event.eventKey);
-  }
+  return (
+    existing.title !== desired.title ||
+    existing.description !== desired.description ||
+    existing.importanceScore !== desired.importanceScore ||
+    existing.importanceLevel !== desired.importanceLevel ||
+    !sameTime(existing.occurredAt, desired.occurredAt)
+  );
 }
 
 async function writeEvents(transaction, matchId, desired, existing) {
@@ -67,7 +56,7 @@ async function writeEvents(transaction, matchId, desired, existing) {
   const changes = { created: [], updated: [], deleted: [] };
   for (const event of desired) {
     const prior = existingByKey.get(event.eventKey);
-    const data = eventData(matchId, event);
+    const data = toEventData(matchId, event);
     if (!prior) {
       const created = await transaction.timelineEvent.create({ data });
       changes.created.push(toTimelineEvent(created, event.inningsNumber));
@@ -81,7 +70,6 @@ async function writeEvents(transaction, matchId, desired, existing) {
 
 async function recordEvents({ matchId, innings, events }) {
   if (!events.length) return { created: [], updated: [], deleted: [] };
-  assertUniqueEventKeys(events);
   const desired = events.map((event) => ({ ...event, inningsNumber: innings.inningsNumber }));
   return prisma.$transaction(async (transaction) => {
     const existing = await transaction.timelineEvent.findMany({
@@ -132,7 +120,6 @@ function desiredEvents(match) {
       events.push({ ...event, inningsNumber: innings.inningsNumber });
     }
   }
-  assertUniqueEventKeys(events);
   return events;
 }
 
@@ -194,9 +181,7 @@ export async function synchronizeMatch({ matchId }) {
  * Records a new delivery using its innings state and player lookup, with no history reads.
  * Apply deliveries once, in order; discard and rebuild state after a SQL failure or correction.
  */
-export async function recordDelivery({ matchId, delivery, innings, players, state, action = 'created' }) {
-  if (action === 'unchanged') return { created: [], updated: [], deleted: [] };
-  if (action === 'corrected') return synchronizeMatch({ matchId });
+export async function recordDelivery({ matchId, delivery, innings, players, state }) {
   if (!state) throw new TimelineValidationError('Timeline recording requires an innings state.');
   if (delivery.inningsId !== innings.id) {
     throw new TimelineValidationError('Delivery does not belong to the supplied innings.');
@@ -210,7 +195,23 @@ export async function finishInnings({ matchId, innings, state }) {
   return recordEvents({ matchId, innings, events: finishTimelineInnings(state) });
 }
 
-export async function list({ matchId, inningsNumber, types, limit, cursor }) {
+const importanceLevels = {
+  MINOR: ['MINOR', 'HIGHLIGHT', 'MAJOR'],
+  HIGHLIGHT: ['HIGHLIGHT', 'MAJOR'],
+  MAJOR: ['MAJOR']
+};
+
+export async function queryTimelineEvents({
+  matchId,
+  inningsNumber,
+  types,
+  playerId,
+  startSequence,
+  endSequence,
+  minimumImportance,
+  limit = 50,
+  cursor
+}) {
   const match = await prisma.match.findUnique({
     where: { id: matchId },
     select: { id: true }
@@ -225,12 +226,33 @@ export async function list({ matchId, inningsNumber, types, limit, cursor }) {
     if (!cursorEvent) throw new TimelineValidationError('Invalid timeline cursor.');
   }
 
+  const deliverySequence = {};
+  if (startSequence) deliverySequence.gte = startSequence;
+  if (endSequence) deliverySequence.lte = endSequence;
+
+  const normalizedTypes = types?.length ? [...new Set(types)] : undefined;
+
+  const where = {
+    matchId,
+    ...(inningsNumber ? { innings: { inningsNumber } } : {}),
+    ...(normalizedTypes?.length ? { type: { in: normalizedTypes } } : {}),
+    ...(playerId
+      ? {
+          delivery: {
+            OR: [
+              { batterId: playerId },
+              { bowlerId: playerId },
+              { wickets: { some: { playerOutId: playerId } } }
+            ]
+          }
+        }
+      : {}),
+    ...(Object.keys(deliverySequence).length ? { deliverySequence } : {}),
+    ...(minimumImportance ? { importanceLevel: { in: importanceLevels[minimumImportance] } } : {})
+  };
+
   const records = await prisma.timelineEvent.findMany({
-    where: {
-      matchId,
-      ...(inningsNumber ? { innings: { inningsNumber } } : {}),
-      ...(types?.length ? { type: { in: types } } : {})
-    },
+    where,
     include: { innings: { select: { inningsNumber: true } } },
     orderBy: [
       { innings: { inningsNumber: 'asc' } },
@@ -244,4 +266,8 @@ export async function list({ matchId, inningsNumber, types, limit, cursor }) {
   const hasMore = records.length > limit;
   const events = records.slice(0, limit).map((event) => toTimelineEvent(event));
   return { events, nextCursor: hasMore ? events.at(-1).id : null };
+}
+
+export async function list({ matchId, inningsNumber, types, limit, cursor }) {
+  return queryTimelineEvents({ matchId, inningsNumber, types, limit, cursor });
 }

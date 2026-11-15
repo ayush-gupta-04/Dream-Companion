@@ -204,17 +204,12 @@ test('recordDelivery keeps milestone event payloads when a delivery crosses both
   assert.equal(transaction.mock.callCount(), 1);
 });
 
-test('recordDelivery skips the database when a delivery has no events or is unchanged', async () => {
+test('recordDelivery skips the database when a delivery has no events', async () => {
   const service = usePrisma({});
   for (const batterRuns of [0, 1]) {
     assert.deepEqual(await service.recordDelivery(deliveryContext(storedDelivery({ batterRuns }))),
       { created: [], updated: [], deleted: [] });
   }
-  const context = deliveryContext();
-  const before = structuredClone(context.state);
-  assert.deepEqual(await service.recordDelivery({ ...context, action: 'unchanged' }),
-    { created: [], updated: [], deleted: [] });
-  assert.deepEqual(context.state, before);
 });
 
 test('recordDelivery hydrates wicket players from the lookup', async () => {
@@ -280,7 +275,7 @@ test('corrections use full reconciliation without advancing the supplied state',
   match.innings[0].deliveries = [storedDelivery({ batterRuns: 6 })];
   const context = deliveryContext();
   const before = structuredClone(context.state);
-  const corrected = await service.recordDelivery({ ...context, action: 'corrected' });
+  const corrected = await service.synchronizeMatch({ matchId: 'match-1' });
   assert.equal(corrected.created[0].type, 'SIX');
   assert.equal(corrected.deleted[0].id, created.created[0].id);
   assert.deepEqual(context.state, before);

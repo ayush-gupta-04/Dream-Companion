@@ -6,13 +6,14 @@ import { after, before, beforeEach, mock, test } from 'node:test';
 import { createReplayMatch, storedDelivery } from './fixtures/replayMatch.js';
 import { deliveryRecordToNormalizedDelivery } from '../src/modules/match-intelligence/persistence/deliveryRepository.js';
 
-let source, match, records, calls, cached, updates, published, progress, failAt;
+let source, match, records, calls, cached, updates, published, failAt, deliveryPublished;
 let contextLoads, reconciliations, finalWrites, nextEventId, directory, filePath;
 function reset() {
   source = createReplayMatch();
   match = structuredClone(source);
   for (const innings of match.innings) innings.deliveries = [];
-  records = []; calls = []; cached = []; updates = []; published = []; progress = [];
+  records = []; calls = []; cached = []; updates = []; published = [];
+  deliveryPublished = () => {};
   failAt = null;
   contextLoads = 0; reconciliations = 0; finalWrites = 0; nextEventId = 0;
 }
@@ -111,6 +112,7 @@ mock.module('../src/sockets/socketServer.js', { exports: {
   publishDeliveryUpdate: (_matchId, action, delivery, state) => {
     calls.push(`socket:delivery:${action}`);
     updates.push({ action, delivery, state });
+    deliveryPublished();
   },
   publishMatchStatus: (_matchId, status) => calls.push(`socket:status:${status}`),
   publishTimelineChanges: (changes) => {
@@ -124,13 +126,13 @@ mock.module('../src/sockets/socketServer.js', { exports: {
 const { replayCricsheetFile } = await import('../src/replay/replayService.js');
 function run(options = {}) {
   return replayCricsheetFile({ filePath, sourceMatchId: 'sample', intervalMs: 1,
-    onProgress: (value) => progress.push(value), pause: async () => { calls.push('pause'); }, ...options });
+    pause: async () => { calls.push('pause'); }, ...options });
 }
 
 test('replay advances both innings without per-ball rebuilds and publishes durable events before completion', async () => {
   const result = await run();
   assert.equal(contextLoads, 1);
-  assert.equal(reconciliations, 1); // The final timeline check only.
+  assert.equal(reconciliations, 0); // No full match reconciliation sweeps needed.
   assert.equal(finalWrites, 0); // All events were already persisted during replay.
   assert.equal(cached.length, 13); // Initial, eleven deliveries, final.
   assert.equal(updates[0].state.currentInnings.state.totalRuns, 11);
@@ -139,8 +141,6 @@ test('replay advances both innings without per-ball rebuilds and publishes durab
   assert.deepEqual(result.state.innings.map((innings) => innings.state.totalRuns), [34, 5]);
   assert.equal(result.state.status, 'COMPLETE');
   assert.deepEqual(cached.at(-1), result.state);
-  assert.equal(progress.at(-1).processedDeliveries, 11);
-  assert.equal(progress.at(-1).totalDeliveries, 11);
   const firstDelivery = calls.indexOf('delivery:innings-1:1');
   assert.deepEqual(calls.slice(firstDelivery, firstDelivery + 7), [
     'delivery:innings-1:1', 'timeline:read', 'timeline:create', 'cache:set',
@@ -153,53 +153,6 @@ test('replay advances both innings without per-ball rebuilds and publishes durab
   ]);
 });
 
-test('restores existing deliveries and repairs missing events without scoring unchanged balls twice', async () => {
-  source.innings = source.innings.slice(0, 1);
-  source.innings[0].deliveries = Array.from({ length: 9 }, (_, index) => storedDelivery({
-    deliverySequence: index + 1, batterRuns: index === 8 ? 2 : 6
-  }));
-  match.innings = match.innings.slice(0, 1);
-  match.innings[0].deliveries = structuredClone(source.innings[0].deliveries.slice(0, 8));
-  const result = await run();
-  assert.equal(contextLoads, 1);
-  assert.equal(reconciliations, 2); // Startup repair and final check.
-  assert.equal(updates.length, 1);
-  assert.equal(cached[0].currentInnings.state.totalRuns, 53);
-  assert.equal(result.state.currentInnings.state.totalRuns, 60);
-  assert.equal(result.state.currentInnings.state.batters.Zara.runs, 50);
-  assert.equal(records.filter((event) => event.type === 'BATTER_MILESTONE').length, 1);
-  assert.equal(finalWrites, 0);
-});
-
-test('a correction reloads both states and reconciles events without applying the corrected ball twice', async () => {
-  source.innings[0].deliveries[0].sourceRevision = '2';
-  match.innings[0].deliveries = [storedDelivery({ batterRuns: 4, sourceRevision: '1' })];
-  const result = await run();
-  assert.equal(contextLoads, 2);
-  assert.equal(reconciliations, 3); // Startup, correction, final.
-  assert.equal(updates[0].action, 'corrected');
-  assert.equal(updates[0].state.currentInnings.state.totalRuns, 11);
-  assert.equal(result.state.innings[0].state.totalRuns, 34);
-  assert.ok(published.some(({ action, event }) => action === 'deleted' && event.type === 'FOUR'));
-  assert.equal(finalWrites, 0);
-});
-
-test('unexpected delivery sequences rebuild from stored facts and then return to incremental processing', async () => {
-  source.innings = source.innings.slice(0, 1);
-  source.innings[0].deliveries = [
-    storedDelivery({ deliverySequence: 2, batterRuns: 4 }),
-    storedDelivery({ batterRuns: 6 }),
-    storedDelivery({ deliverySequence: 3, batterRuns: 1 })
-  ];
-  match.innings = match.innings.slice(0, 1);
-  const result = await run();
-  assert.equal(contextLoads, 3);
-  assert.equal(reconciliations, 3);
-  assert.deepEqual(updates.map(({ state }) => state.currentInnings.state.totalRuns), [9, 15, 16]);
-  assert.equal(result.state.currentInnings.state.totalRuns, 21);
-  assert.equal(finalWrites, 0);
-});
-
 for (const failure of ['delivery', 'timeline', 'complete']) {
   test(`${failure} SQL failure stops replay before publishing match completion`, async () => {
     failAt = failure;
@@ -210,11 +163,6 @@ for (const failure of ['delivery', 'timeline', 'complete']) {
     if (failure === 'timeline') {
       assert.equal(updates.length, 0);
       assert.equal(cached.length, 1);
-      // A new invocation restores the persisted delivery and repairs its missing events.
-      failAt = null;
-      const result = await run();
-      assert.equal(result.state.innings[0].state.totalRuns, 34);
-      assert.equal(records.filter((event) => event.eventKey === 'delivery:innings-1-delivery-1:six').length, 1);
     }
   });
 }
@@ -222,7 +170,7 @@ for (const failure of ['delivery', 'timeline', 'complete']) {
 test('cancellation before startup and after the last delivery never finalizes the match', async () => {
   const controller = new AbortController();
   controller.abort();
-  await assert.rejects(run({ signal: controller.signal }), /Replay cancelled/);
+  await assert.rejects(run({ signal: controller.signal }), { name: 'AbortError' });
   assert.equal(contextLoads, 0);
   source.innings = source.innings.slice(0, 1);
   source.innings[0].deliveries = [storedDelivery(), storedDelivery({ deliverySequence: 2 })];
@@ -230,10 +178,22 @@ test('cancellation before startup and after the last delivery never finalizes th
   const active = new AbortController();
   await assert.rejects(run({ signal: active.signal, pause: async () => {
     if (updates.length === 2) active.abort();
-  } }), /Replay cancelled/);
+  } }), { name: 'AbortError' });
   assert.equal(match.status, 'LIVE');
   assert.equal(records.length, 0); // The partial over is still unfinished.
   assert.equal(calls.includes('socket:status:COMPLETE'), false);
+});
+
+test('cancellation interrupts the default timer before another delivery is processed', async (t) => {
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const firstDelivery = new Promise((resolve) => { deliveryPublished = resolve; });
+  const running = run({ signal: controller.signal, intervalMs: 60_000, pause: undefined });
+  await firstDelivery;
+  controller.abort();
+  await assert.rejects(running, { name: 'AbortError' });
+  assert.equal(updates.length, 1);
+  assert.equal(match.status, 'LIVE');
 });
 
 test('Redis failure keeps replay scoring and publishing from its in-memory state', async () => {

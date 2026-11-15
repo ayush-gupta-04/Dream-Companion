@@ -26,14 +26,12 @@ function eventFromDelivery(delivery, details) {
   };
 }
 
-function pairFor(delivery) {
-  return [delivery.batter, delivery.nonStriker].sort((left, right) =>
-    left.id.localeCompare(right.id)
-  );
-}
-
 function bowlerConceded(delivery) {
   return delivery.totalRuns - delivery.byes - delivery.legByes - delivery.penaltyRuns;
+}
+
+function partnershipKey(batterId, nonStrikerId) {
+  return batterId < nonStrikerId ? `${batterId}:${nonStrikerId}` : `${nonStrikerId}:${batterId}`;
 }
 
 function completedOverEvents({ overNumber, anchor, runs, conceded }, completedGroups) {
@@ -70,7 +68,7 @@ function completedOverEvents({ overNumber, anchor, runs, conceded }, completedGr
   const previous = completedGroups.slice(-SCORING_RATE_WINDOW_OVERS);
   if (previous.length === SCORING_RATE_WINDOW_OVERS) {
     const baseline =
-      previous.reduce((total, previousGroup) => total + previousGroup.runs, 0) / previous.length;
+      previous.reduce((total, group) => total + group.runs, 0) / previous.length;
     if (
       runs >= SCORING_RATE_ACCELERATION_MINIMUM &&
       runs >= baseline * SCORING_RATE_ACCELERATION_MULTIPLIER
@@ -106,9 +104,6 @@ function completedOverEvents({ overNumber, anchor, runs, conceded }, completedGr
   return events;
 }
 
-/**
- * Detects boundaries and wickets without accumulated innings state.
- */
 export function detectBoundaryAndWicketEvents(delivery) {
   const events = [];
 
@@ -123,9 +118,7 @@ export function detectBoundaryAndWicketEvents(delivery) {
         ...importance(35, 'MINOR')
       })
     );
-  }
-
-  if (delivery.batterRuns === 6) {
+  } else if (delivery.batterRuns === 6) {
     events.push(
       eventFromDelivery(delivery, {
         eventKey: `delivery:${delivery.id}:six`,
@@ -138,9 +131,9 @@ export function detectBoundaryAndWicketEvents(delivery) {
     );
   }
 
-  for (const [wicketIndex, wicket] of (delivery.wickets ?? []).entries()) {
+  for (const [index, wicket] of (delivery.wickets ?? []).entries()) {
     if (!wicket.countsAsWicket) continue;
-    const wicketSequence = wicket.wicketSequence ?? wicketIndex + 1;
+    const wicketSequence = wicket.wicketSequence ?? index + 1;
     events.push(
       eventFromDelivery(delivery, {
         eventKey: `delivery:${delivery.id}:wicket:${wicketSequence}`,
@@ -158,7 +151,6 @@ export function detectBoundaryAndWicketEvents(delivery) {
 
 export function detectBatterMilestoneEvents({ delivery, previousRuns, updatedRuns }) {
   const events = [];
-
   for (const milestone of BATTER_MILESTONES) {
     if (previousRuns < milestone && updatedRuns >= milestone) {
       events.push(
@@ -173,7 +165,6 @@ export function detectBatterMilestoneEvents({ delivery, previousRuns, updatedRun
       );
     }
   }
-
   return events;
 }
 
@@ -181,13 +172,11 @@ export function detectPartnershipMilestoneEvents({
   delivery,
   previousRuns,
   updatedRuns,
-  partnershipStartDeliveryId = delivery.id,
-  partnershipPlayers = pairFor(delivery),
-  milestones = PARTNERSHIP_MILESTONES
+  partnershipStartDeliveryId,
+  partnershipPlayers
 }) {
   const events = [];
-
-  for (const milestone of milestones) {
+  for (const milestone of PARTNERSHIP_MILESTONES) {
     if (previousRuns < milestone && updatedRuns >= milestone) {
       const names = partnershipPlayers.map((player) => player.displayName).join(' and ');
       events.push(
@@ -202,34 +191,7 @@ export function detectPartnershipMilestoneEvents({
       );
     }
   }
-
   return events;
-}
-
-export function detectSingleDeliveryEvents({
-  delivery,
-  previousBatterRuns = 0,
-  updatedBatterRuns = previousBatterRuns + delivery.batterRuns,
-  previousPartnershipRuns = 0,
-  updatedPartnershipRuns = previousPartnershipRuns + delivery.totalRuns,
-  partnershipStartDeliveryId = delivery.id,
-  partnershipPlayers = pairFor(delivery)
-}) {
-  return [
-    ...detectBoundaryAndWicketEvents(delivery),
-    ...detectBatterMilestoneEvents({
-      delivery,
-      previousRuns: previousBatterRuns,
-      updatedRuns: updatedBatterRuns
-    }),
-    ...detectPartnershipMilestoneEvents({
-      delivery,
-      previousRuns: previousPartnershipRuns,
-      updatedRuns: updatedPartnershipRuns,
-      partnershipStartDeliveryId,
-      partnershipPlayers
-    })
-  ];
 }
 
 /** Creates independent detector state for one innings; no delivery history is retained. */
@@ -265,25 +227,33 @@ export function applyDeliveryToTimelineState(state, delivery) {
   const updatedBatterRuns = previousBatterRuns + delivery.batterRuns;
   state.batterRuns.set(delivery.batter.id, updatedBatterRuns);
 
-  const pair = pairFor(delivery);
-  const pairKey = pair.map((player) => player.id).join(':');
+  const pairKey = partnershipKey(delivery.batter.id, delivery.nonStriker.id);
   if (!state.partnership || state.partnership.key !== pairKey) {
+    const players = delivery.batter.id < delivery.nonStriker.id
+      ? [delivery.batter, delivery.nonStriker]
+      : [delivery.nonStriker, delivery.batter];
     state.partnership = {
-      key: pairKey, startDeliveryId: delivery.id, players: pair, runs: 0
+      key: pairKey, startDeliveryId: delivery.id, players, runs: 0
     };
   }
   const previousPartnershipRuns = state.partnership.runs;
   state.partnership.runs += delivery.totalRuns;
 
-  const deliveryEvents = detectSingleDeliveryEvents({
-    delivery,
-    previousBatterRuns,
-    updatedBatterRuns,
-    previousPartnershipRuns,
-    updatedPartnershipRuns: state.partnership.runs,
-    partnershipStartDeliveryId: state.partnership.startDeliveryId,
-    partnershipPlayers: state.partnership.players
-  });
+  const deliveryEvents = [
+    ...detectBoundaryAndWicketEvents(delivery),
+    ...detectBatterMilestoneEvents({
+      delivery,
+      previousRuns: previousBatterRuns,
+      updatedRuns: updatedBatterRuns
+    }),
+    ...detectPartnershipMilestoneEvents({
+      delivery,
+      previousRuns: previousPartnershipRuns,
+      updatedRuns: state.partnership.runs,
+      partnershipStartDeliveryId: state.partnership.startDeliveryId,
+      partnershipPlayers: state.partnership.players
+    })
+  ];
   events.push(...deliveryEvents.sort((left, right) => left.eventOrder - right.eventOrder));
   return events;
 }

@@ -10,21 +10,18 @@ import { bootstrapCricsheetMatch } from '../modules/ingestion/matchBootstrapServ
 import { clearMatchSimulationData } from './matchSimulationDataService.js';
 
 function resolveArchiveDirectory(dataDirectory) {
+  if (path.isAbsolute(dataDirectory) && existsSync(dataDirectory)) {
+    return dataDirectory;
+  }
   const candidates = [
     path.resolve(process.cwd(), dataDirectory),
-    path.resolve(process.cwd(), 'backend', dataDirectory),
-    path.resolve(process.cwd(), '..', dataDirectory)
+    path.resolve(process.cwd(), 'backend', dataDirectory)
   ];
-
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
-function sourceMatchIdFor(fileName) {
-  return path.basename(fileName, path.extname(fileName));
-}
-
 async function loadAdaptedMatch(filePath) {
-  const sourceMatchId = sourceMatchIdFor(filePath);
+  const sourceMatchId = path.parse(filePath).name;
   const rawMatch = JSON.parse(await readFile(filePath, 'utf8'));
   return adaptCricsheetMatch(rawMatch, sourceMatchId);
 }
@@ -37,7 +34,7 @@ async function historicalMatchIsCurrent(adaptedMatch) {
         sourceMatchId: adaptedMatch.sourceMatchId
       }
     },
-    select: { id: true, sourceRevision: true, status: true }
+    select: { sourceRevision: true, status: true }
   });
 
   return existing?.sourceRevision === adaptedMatch.sourceRevision && existing.status === 'COMPLETE';
@@ -45,10 +42,9 @@ async function historicalMatchIsCurrent(adaptedMatch) {
 
 async function persistHistoricalMatch(adaptedMatch) {
   const preparedMatch = await bootstrapCricsheetMatch(adaptedMatch);
+  const matchId = preparedMatch.match.id;
 
-  // A source revision or an interrupted earlier import starts from a clean
-  // delivery-derived record while retaining stable identity records.
-  await clearMatchSimulationData({ matchId: preparedMatch.match.id, status: 'SCHEDULED' });
+  await clearMatchSimulationData({ matchId, status: 'SCHEDULED' });
 
   for (const innings of preparedMatch.innings) {
     for (const delivery of innings.deliveries) {
@@ -57,12 +53,10 @@ async function persistHistoricalMatch(adaptedMatch) {
   }
 
   await prisma.match.update({
-    where: { id: preparedMatch.match.id },
+    where: { id: matchId },
     data: { status: 'COMPLETE' }
   });
-  await timelineService.synchronizeMatch({ matchId: preparedMatch.match.id });
-
-  return preparedMatch.match.id;
+  await timelineService.synchronizeMatch({ matchId });
 }
 
 /**
@@ -75,12 +69,9 @@ export async function bootstrapLiveMatch() {
     throw new Error(`Cricsheet archive directory was not found: ${dataDirectory}`);
   }
 
-  const normalizedLiveFileName = path.basename(liveFileName);
-  const liveFilePath = path.join(archiveDirectory, normalizedLiveFileName);
+  const liveFilePath = path.join(archiveDirectory, liveFileName);
   if (!existsSync(liveFilePath)) {
-    throw new Error(
-      `Configured live replay file was not found in the archive: ${normalizedLiveFileName}`
-    );
+    throw new Error(`Configured live replay file was not found in the archive: ${liveFileName}`);
   }
 
   const adaptedMatch = await loadAdaptedMatch(liveFilePath);
@@ -88,7 +79,6 @@ export async function bootstrapLiveMatch() {
   await clearMatchSimulationData({ matchId: preparedMatch.match.id, status: 'LIVE' });
 
   return {
-    archiveDirectory,
     liveFilePath,
     liveMatchId: preparedMatch.match.id
   };
@@ -103,16 +93,13 @@ export async function seedHistoricalArchive({ signal } = {}) {
   const archiveDirectory = resolveArchiveDirectory(dataDirectory);
   if (!archiveDirectory) return;
 
-  const normalizedLiveFileName = path.basename(liveFileName);
-  const allFiles = (await readdir(archiveDirectory, { withFileTypes: true }))
-    .filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === '.json')
+  const entries = await readdir(archiveDirectory, { withFileTypes: true });
+  const allFiles = entries
+    .filter((entry) => entry.isFile() && entry.name !== liveFileName && entry.name.toLowerCase().endsWith('.json'))
     .map((entry) => entry.name)
-    .sort((left, right) => left.localeCompare(right))
-    .filter((fileName) => fileName !== normalizedLiveFileName);
+    .sort((a, b) => a.localeCompare(b));
 
-  const fileLimit = limit > 0 ? limit : allFiles.length;
-  const targetFiles = allFiles.slice(0, fileLimit);
-
+  const targetFiles = limit > 0 ? allFiles.slice(0, limit) : allFiles;
   console.log(`[Archive] Background seeding started for ${targetFiles.length} historical matches...`);
 
   let seeded = 0;
