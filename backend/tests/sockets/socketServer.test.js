@@ -93,11 +93,12 @@ test('publishes timeline reconciliation changes to the matching room', () => {
   });
   to.mock.restore();
 
-  assert.deepEqual(
-    events.map((event) => event.event),
-    ['timeline_event_created', 'timeline_event_updated', 'timeline_event_deleted']
-  );
-  assert.ok(events.every((event) => event.room === matchRoom('match-1')));
+  assert.deepEqual(events, [
+    { room: matchRoom('match-1'), event: 'timeline_event_created', payload: timelineEvent },
+    { room: matchRoom('match-1'), event: 'timeline_event_updated',
+      payload: { ...timelineEvent, title: 'Updated four' } },
+    { room: matchRoom('match-1'), event: 'timeline_event_deleted', payload: timelineEvent }
+  ]);
 });
 
 test('joins a requested match room and receives only that room events', async () => {

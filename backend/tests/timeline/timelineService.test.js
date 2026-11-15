@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
+import { createReplayMatch } from '../fixtures/replayMatch.js';
 
 const prisma = {};
 mock.module('../../src/db/prisma.js', { exports: { prisma } });
@@ -75,6 +76,7 @@ test('reconciles a corrected delivery by deleting its obsolete timeline event', 
 });
 
 test('returns a stable, compact timeline response', async () => {
+  const occurredAt = new Date('2026-01-01T12:00:00Z');
   const service = usePrisma({
     match: { findUnique: async () => ({ id: 'match-1' }) },
     timelineEvent: {
@@ -87,12 +89,14 @@ test('returns a stable, compact timeline response', async () => {
           deliverySequence: 1,
           displayOver: 0,
           displayBallLabel: '0.1',
+          eventKey: 'delivery:delivery-1:four',
+          eventOrder: 10,
           type: 'FOUR',
           title: 'Four by Batter One',
           description: 'Batter One hit four at 0.1.',
           importanceScore: 35,
           importanceLevel: 'MINOR',
-          occurredAt: null,
+          occurredAt,
           innings: { inningsNumber: 1 }
         }
       ]
@@ -101,12 +105,44 @@ test('returns a stable, compact timeline response', async () => {
 
   const result = await service.list({ matchId: 'match-1', limit: 50 });
 
-  assert.equal(result.nextCursor, null);
-  assert.deepEqual(result.events[0].delivery, {
-    id: 'delivery-1',
-    sequence: 1,
-    display: { overNumber: 0, ballLabel: '0.1' }
+  assert.deepEqual(result, {
+    nextCursor: null,
+    events: [{
+      id: 'event-1', matchId: 'match-1', innings: { id: 'innings-1', number: 1 },
+      delivery: { id: 'delivery-1', sequence: 1, display: { overNumber: 0, ballLabel: '0.1' } },
+      type: 'FOUR', title: 'Four by Batter One', description: 'Batter One hit four at 0.1.',
+      importance: { score: 35, level: 'MINOR' }, occurredAt
+    }]
   });
+});
+
+test('starting the next innings finalizes only the previous innings and keeps delivery identities separate', async () => {
+  const match = createReplayMatch();
+  let id = 0;
+  const service = usePrisma({
+    $transaction: async (operation) => operation({
+      match: { findUnique: async () => match },
+      timelineEvent: {
+        findMany: async () => [],
+        create: async ({ data }) => ({ id: `event-${++id}`, ...data })
+      }
+    })
+  });
+
+  const changes = await service.synchronizeMatch({ matchId: match.id });
+  assert.deepEqual(changes.created.map((event) => [
+    event.innings.number, event.delivery.id, event.type
+  ]), [
+    [1, 'innings-1-delivery-1', 'SIX'],
+    [1, 'innings-1-delivery-3', 'FOUR'],
+    [1, 'innings-1-delivery-8', 'WICKET'],
+    [1, 'innings-1-delivery-8', 'EXPENSIVE_OVER'],
+    [1, 'innings-1-delivery-9', 'MAIDEN_OVER'],
+    [2, 'innings-2-delivery-1', 'FOUR'],
+    [2, 'innings-2-delivery-2', 'WICKET']
+  ]);
+  assert.deepEqual(changes.updated, []);
+  assert.deepEqual(changes.deleted, []);
 });
 
 test('recordDelivery fast-path creates a FOUR event for a boundary without full match query', async () => {

@@ -18,23 +18,28 @@ export const matchQueryRequestSchema = z
   })
   .strict();
 
-function requireField(value, field, context) {
-  if (value === null) {
-    context.addIssue({ code: 'custom', path: [field], message: `${field} is required.` });
-  }
-}
+// Allowed non-null parameters per tool
+const ALLOWED_TOOL_PARAMS = {
+  OVER_ANALYSIS: ['inningsNumber', 'overNumber'],
+  PLAYER_ANALYSIS: ['playerId'],
+  OVER_COMPARISON: ['inningsNumber', 'comparisonOver1', 'comparisonOver2'],
+  EVENT_SEARCH: [
+    'inningsNumber',
+    'playerId',
+    'eventTypes',
+    'minimumImportance',
+    'startSequence',
+    'endSequence'
+  ],
+  LAST_N_MINUTES: ['minutes'],
+  LAST_N_OVERS: ['overs'],
+  LAST_OVER: [],
+  SINCE_SESSION_JOIN: [],
+  WHOLE_MATCH: [],
+  UNSUPPORTED: []
+};
 
-function requireNull(value, field, context) {
-  if (value !== null) {
-    context.addIssue({ code: 'custom', path: [field], message: `${field} is not applicable.` });
-  }
-}
-
-function requireOnlyNulls(value, fields, context) {
-  for (const field of fields) requireNull(value[field], field, context);
-}
-
-const allParameterFields = [
+const ALL_PARAMS = [
   'inningsNumber',
   'overNumber',
   'comparisonOver1',
@@ -49,8 +54,7 @@ const allParameterFields = [
 ];
 
 /**
- * The model may select exactly one operation and only provide its bounded
- * arguments. The service validates this shape before any domain function runs.
+ * Validates that exactly one tool is selected and only its permitted parameters are populated.
  */
 export const matchQueryToolSchema = z
   .object({
@@ -67,133 +71,76 @@ export const matchQueryToolSchema = z
     minutes: z.number().int().min(1).max(180).nullable(),
     overs: z.number().int().min(1).max(20).nullable()
   })
-  .superRefine((value, context) => {
-    const analysisFields = [
-      'inningsNumber',
-      'overNumber',
-      'comparisonOver1',
-      'comparisonOver2',
-      'playerId',
-      'eventTypes',
-      'minimumImportance',
-      'startSequence',
-      'endSequence'
-    ];
-    const recapFields = ['minutes', 'overs'];
+  .superRefine((val, ctx) => {
+    const allowed = ALLOWED_TOOL_PARAMS[val.tool] || [];
 
-    if (value.tool === 'OVER_ANALYSIS') {
-      const hasInnings = value.inningsNumber !== null;
-      const hasOver = value.overNumber !== null;
+    // Ensure parameters not applicable to this tool are null
+    for (const param of ALL_PARAMS) {
+      if (!allowed.includes(param) && val[param] !== null) {
+        ctx.addIssue({ code: 'custom', path: [param], message: `${param} is not applicable.` });
+      }
+    }
+
+    // Tool-specific validations
+    if (val.tool === 'OVER_ANALYSIS') {
+      const hasInnings = val.inningsNumber !== null;
+      const hasOver = val.overNumber !== null;
       if (hasInnings !== hasOver) {
-        if (!hasInnings) {
-          context.addIssue({
-            code: 'custom',
-            path: ['inningsNumber'],
-            message: 'inningsNumber is required when overNumber is specified.'
-          });
-        }
-        if (!hasOver) {
-          context.addIssue({
-            code: 'custom',
-            path: ['overNumber'],
-            message: 'overNumber is required when inningsNumber is specified.'
-          });
+        ctx.addIssue({
+          code: 'custom',
+          path: [hasInnings ? 'overNumber' : 'inningsNumber'],
+          message: `${hasInnings ? 'overNumber' : 'inningsNumber'} is required when ${hasInnings ? 'inningsNumber' : 'overNumber'} is specified.`
+        });
+      }
+    } else if (val.tool === 'PLAYER_ANALYSIS') {
+      if (val.playerId === null) {
+        ctx.addIssue({ code: 'custom', path: ['playerId'], message: 'playerId is required.' });
+      }
+    } else if (val.tool === 'OVER_COMPARISON') {
+      for (const field of ['inningsNumber', 'comparisonOver1', 'comparisonOver2']) {
+        if (val[field] === null) {
+          ctx.addIssue({ code: 'custom', path: [field], message: `${field} is required.` });
         }
       }
-      requireOnlyNulls(
-        value,
-        [
-          ...analysisFields.filter((field) => !['inningsNumber', 'overNumber'].includes(field)),
-          ...recapFields
-        ],
-        context
-      );
-      return;
-    }
-
-    if (value.tool === 'PLAYER_ANALYSIS') {
-      requireField(value.playerId, 'playerId', context);
-      requireOnlyNulls(
-        value,
-        [...analysisFields.filter((field) => field !== 'playerId'), ...recapFields],
-        context
-      );
-      return;
-    }
-
-    if (value.tool === 'OVER_COMPARISON') {
-      requireField(value.inningsNumber, 'inningsNumber', context);
-      requireField(value.comparisonOver1, 'comparisonOver1', context);
-      requireField(value.comparisonOver2, 'comparisonOver2', context);
       if (
-        value.comparisonOver1 !== null &&
-        value.comparisonOver2 !== null &&
-        value.comparisonOver1 === value.comparisonOver2
+        val.comparisonOver1 !== null &&
+        val.comparisonOver2 !== null &&
+        val.comparisonOver1 === val.comparisonOver2
       ) {
-        context.addIssue({
+        ctx.addIssue({
           code: 'custom',
           path: ['comparisonOver2'],
           message: 'comparisonOver2 must differ from comparisonOver1.'
         });
       }
-      requireOnlyNulls(
-        value,
-        [
-          ...analysisFields.filter(
-            (field) => !['inningsNumber', 'comparisonOver1', 'comparisonOver2'].includes(field)
-          ),
-          ...recapFields
-        ],
-        context
-      );
-      return;
-    }
-
-    if (value.tool === 'EVENT_SEARCH') {
-      requireOnlyNulls(
-        value,
-        ['overNumber', 'comparisonOver1', 'comparisonOver2', ...recapFields],
-        context
-      );
-      if (
-        (value.startSequence !== null || value.endSequence !== null) &&
-        value.inningsNumber === null
-      ) {
-        context.addIssue({
+    } else if (val.tool === 'EVENT_SEARCH') {
+      if ((val.startSequence !== null || val.endSequence !== null) && val.inningsNumber === null) {
+        ctx.addIssue({
           code: 'custom',
           path: ['inningsNumber'],
           message: 'inningsNumber is required for a delivery sequence range.'
         });
       }
       if (
-        value.startSequence !== null &&
-        value.endSequence !== null &&
-        value.startSequence > value.endSequence
+        val.startSequence !== null &&
+        val.endSequence !== null &&
+        val.startSequence > val.endSequence
       ) {
-        context.addIssue({
+        ctx.addIssue({
           code: 'custom',
           path: ['endSequence'],
           message: 'endSequence must not precede startSequence.'
         });
       }
-      return;
+    } else if (val.tool === 'LAST_N_MINUTES') {
+      if (val.minutes === null) {
+        ctx.addIssue({ code: 'custom', path: ['minutes'], message: 'minutes is required.' });
+      }
+    } else if (val.tool === 'LAST_N_OVERS') {
+      if (val.overs === null) {
+        ctx.addIssue({ code: 'custom', path: ['overs'], message: 'overs is required.' });
+      }
     }
-
-    if (value.tool === 'LAST_N_MINUTES') {
-      requireField(value.minutes, 'minutes', context);
-      requireNull(value.overs, 'overs', context);
-      requireOnlyNulls(value, analysisFields, context);
-      return;
-    }
-
-    if (value.tool === 'LAST_N_OVERS') {
-      requireField(value.overs, 'overs', context);
-      requireNull(value.minutes, 'minutes', context);
-      requireOnlyNulls(value, analysisFields, context);
-      return;
-    }
-
-    requireOnlyNulls(value, allParameterFields, context);
   });
 
 export const analysisNarrationSchema = z.object({

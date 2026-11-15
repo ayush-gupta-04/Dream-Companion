@@ -1,51 +1,19 @@
-function deliveryReference(delivery) {
-  return {
-    deliveryId: delivery.id,
-    inningsId: delivery.inningsId,
-    inningsNumber: delivery.innings.inningsNumber,
-    deliverySequence: delivery.deliverySequence,
-    display: {
-      overNumber: delivery.displayOver,
-      ballLabel: delivery.displayBallLabel
-    }
-  };
-}
+import { formatDeliveryReference } from '../../utils/formatting.js';
 
-function createWindowFromDeliveries(type, selected, options = {}) {
-  const deliveries = selected ?? [];
+function createWindow(type, deliveries = [], options = {}) {
   return {
     type,
-    availability: 'AVAILABLE',
+    availability: options.availability ?? 'AVAILABLE',
     timestampQuality: options.timestampQuality ?? 'NOT_APPLICABLE',
     anchor: options.anchor ?? null,
     overRange: options.overRange ?? null,
     deliveryRange: {
-      start: deliveries[0] ? deliveryReference(deliveries[0]) : null,
-      end: deliveries.at(-1) ? deliveryReference(deliveries.at(-1)) : null,
+      start: deliveries[0] ? formatDeliveryReference(deliveries[0]) : null,
+      end: deliveries.at(-1) ? formatDeliveryReference(deliveries.at(-1)) : null,
       deliveryCount: deliveries.length
     },
     deliveries,
     limitations: options.limitations ?? []
-  };
-}
-
-function createWindow(type, deliveries, startIndex, endIndex, options = {}) {
-  const selected = startIndex < 0 || startIndex > endIndex ? [] : deliveries.slice(startIndex, endIndex + 1);
-  return createWindowFromDeliveries(type, selected, options);
-}
-
-function unavailableTimeWindow(type, minutes) {
-  return {
-    type,
-    availability: 'UNAVAILABLE',
-    timestampQuality: 'UNAVAILABLE',
-    anchor: null,
-    overRange: null,
-    deliveryRange: { start: null, end: null, deliveryCount: 0 },
-    deliveries: [],
-    limitations: [
-      `A last ${minutes}-minute recap is unavailable because this match has no trustworthy event timestamps.`
-    ]
   };
 }
 
@@ -85,7 +53,7 @@ function completedOverRange(groups, requestedOvers) {
 function resolveLastCompletedOvers({ type, matchStatus, deliveries, requestedOvers }) {
   const completed = completedOverGroups(deliveries, matchStatus);
   if (completed.length === 0) {
-    return createWindowFromDeliveries(type, [], {
+    return createWindow(type, [], {
       limitations: ['No completed over is available in the current innings yet.']
     });
   }
@@ -96,15 +64,15 @@ function resolveLastCompletedOvers({ type, matchStatus, deliveries, requestedOve
     selectedGroups.length < requestedOvers
       ? [`Only ${selectedGroups.length} completed over(s) are available in the current innings.`]
       : [];
-  return createWindowFromDeliveries(type, selectedDeliveries, {
-    anchor: deliveryReference(selectedGroups.at(-1).deliveries.at(-1)),
+  return createWindow(type, selectedDeliveries, {
+    anchor: formatDeliveryReference(selectedGroups.at(-1).deliveries.at(-1)),
     overRange: completedOverRange(selectedGroups, requestedOvers),
     limitations
   });
 }
 
 function afterSessionMarker(delivery, session) {
-  if (session.joinedInningsNumber === null || session.joinedDeliverySequence === null) {
+  if (session?.joinedInningsNumber == null || session?.joinedDeliverySequence == null) {
     return true;
   }
   const inningsNumber = delivery.innings.inningsNumber;
@@ -115,58 +83,64 @@ function afterSessionMarker(delivery, session) {
   );
 }
 
+/**
+ * Resolves a deterministic delivery window according to the requested tool/window type.
+ */
+export function resolveRecapWindow({ matchStatus, deliveries = [], request, tool, session }) {
+  const windowType = request?.window ?? tool?.tool;
+  const minutes = request?.minutes ?? tool?.minutes;
+  const overs = request?.overs ?? tool?.overs ?? 1;
 
-
-// The Main Method : 
-// It build the window accoring to the TOOL selected!
-
-export function resolveRecapWindow({ matchStatus, deliveries, request, session }) {
-  if (request.window === 'WHOLE_MATCH') {
-    return createWindow(request.window, deliveries, 0, deliveries.length - 1);
+  if (windowType === 'WHOLE_MATCH') {
+    return createWindow(windowType, deliveries);
   }
 
-  if (request.window === 'LAST_N_MINUTES') {
+  if (windowType === 'LAST_N_MINUTES') {
     if (deliveries.length === 0 || deliveries.some((delivery) => !delivery.occurredAt)) {
-      return unavailableTimeWindow(request.window, request.minutes);
+      return createWindow(windowType, [], {
+        availability: 'UNAVAILABLE',
+        timestampQuality: 'UNAVAILABLE',
+        limitations: [
+          `A last ${minutes}-minute recap is unavailable because this match has no trustworthy event timestamps.`
+        ]
+      });
     }
     const latest = new Date(deliveries.at(-1).occurredAt).getTime();
-    const cutoff = latest - request.minutes * 60_000;
+    const cutoff = latest - minutes * 60_000;
     const startIndex = deliveries.findIndex(
       (delivery) => new Date(delivery.occurredAt).getTime() >= cutoff
     );
-    return createWindow(request.window, deliveries, startIndex, deliveries.length - 1, {
+    const selected = startIndex === -1 ? [] : deliveries.slice(startIndex);
+    return createWindow(windowType, selected, {
       timestampQuality: 'TRUSTWORTHY_EVENT_TIME'
     });
   }
 
-  if (request.window === 'SINCE_SESSION_JOIN') {
+  if (windowType === 'SINCE_SESSION_JOIN') {
     const startIndex = deliveries.findIndex((delivery) => afterSessionMarker(delivery, session));
-    return createWindow(request.window, deliveries, startIndex, deliveries.length - 1, {
-      anchor: {
-        inningsNumber: session.joinedInningsNumber,
-        deliverySequence: session.joinedDeliverySequence,
-        joinedAt: session.joinedAt
-      }
+    const selected = startIndex === -1 ? [] : deliveries.slice(startIndex);
+    return createWindow(windowType, selected, {
+      anchor: session
+        ? {
+            inningsNumber: session.joinedInningsNumber,
+            deliverySequence: session.joinedDeliverySequence,
+            joinedAt: session.joinedAt
+          }
+        : null
     });
   }
 
-  if (request.window === 'LAST_OVER') {
+  if (windowType === 'LAST_OVER' || windowType === 'LAST_N_OVERS') {
     return resolveLastCompletedOvers({
-      type: request.window,
+      type: windowType,
       matchStatus,
       deliveries,
-      requestedOvers: 1
+      requestedOvers: windowType === 'LAST_OVER' ? 1 : overs
     });
   }
 
-  if (request.window === 'LAST_N_OVERS') {
-    return resolveLastCompletedOvers({
-      type: request.window,
-      matchStatus,
-      deliveries,
-      requestedOvers: request.overs
-    });
-  }
-
-  throw new Error(`Unsupported recap window: ${request.window}`);
+  throw new Error(`Unsupported recap window: ${windowType}`);
 }
+
+export const executeRecapTool = resolveRecapWindow;
+

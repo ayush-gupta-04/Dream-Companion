@@ -1,6 +1,6 @@
 import { config } from '../../config/index.js';
 import { prisma } from '../../db/prisma.js';
-import { analysisToolTypes, matchQueryToolSchema } from '../../schemas/matchQuerySchemas.js';
+import { analysisToolTypes } from '../../schemas/matchQuerySchemas.js';
 import { recapWindowTypes } from '../../schemas/recapSchemas.js';
 import { executeRecap } from '../summaries/recapService.js';
 import { executeAnalysis } from './askMatchService.js';
@@ -33,15 +33,11 @@ function analysisResult(result) {
   return {
     kind: 'ANALYSIS',
     tool: result.tool,
-    answer: {
-      headline: result.answer.headline,
-      body: result.answer.analysis,
-      bullets: []
-    },
+    answer: result.answer ?? '',
     evidence: result.facts,
-    references: result.answer.factReferences,
+    references: result.references ?? result.facts?.references ?? [],
     window: null,
-    limitations: result.limitations
+    limitations: result.limitations ?? []
   };
 }
 
@@ -49,17 +45,11 @@ function recapResult(result) {
   return {
     kind: 'RECAP',
     tool: result.tool,
-    answer: result.recap
-      ? {
-          headline: result.recap.headline,
-          body: result.recap.summary,
-          bullets: result.recap.bullets
-        }
-      : null,
+    answer: result.recap ?? null,
     evidence: result.evidence,
-    references: result.recap?.factReferences ?? [],
+    references: result.references ?? result.evidence?.references ?? [],
     window: result.window,
-    limitations: result.limitations
+    limitations: result.limitations ?? []
   };
 }
 
@@ -72,6 +62,11 @@ async function requireMatch(matchId) {
   return match;
 }
 
+/**
+ * Main AI match assistant entrypoint.
+ * Routes a natural-language query to an analysis tool or recap window,
+ * fetches deterministic facts, and returns a grounded narration.
+ */
 export async function queryMatch({ matchId, request, viewer }) {
   if (!config.gemini.apiKey) throw new AiUnavailableError();
 
@@ -82,15 +77,11 @@ export async function queryMatch({ matchId, request, viewer }) {
     orderBy: { displayName: 'asc' }
   });
 
-  const tool = matchQueryToolSchema.parse(
-    await selectTool({
-      query: request.query,
-      players,
-      sessionIdProvided: Boolean(request.sessionId)
-    })
-  );
-
-  if (tool.tool === 'UNSUPPORTED') return unsupportedResult();
+  const tool = await selectTool({
+    query: request.query,
+    players,
+    sessionIdProvided: Boolean(request.sessionId)
+  });
 
   if (analysisToolTypes.includes(tool.tool)) {
     return analysisResult(await executeAnalysis({ matchId, query: request.query, tool }));

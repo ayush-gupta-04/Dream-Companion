@@ -12,7 +12,7 @@ test('POST /api/matches/:matchId/query validates the shared contract and returns
   query = async ({ matchId, request: queryRequest }) => ({
     kind: 'ANALYSIS',
     tool: 'OVER_ANALYSIS',
-    answer: { headline: queryRequest.query, body: matchId, bullets: [] },
+    answer: `# ${queryRequest.query}\n\n${matchId}`,
     evidence: null,
     references: [],
     window: null,
@@ -28,7 +28,7 @@ test('POST /api/matches/:matchId/query validates the shared contract and returns
     .send({ query: 'Summarize the match', detail: 'QUICK' });
 
   assert.equal(valid.status, 200);
-  assert.equal(valid.body.answer.body, 'match-1');
+  assert.equal(valid.body.answer, '# Analyse the first over\n\nmatch-1');
   assert.equal(invalid.status, 400);
   assert.equal(invalid.body.message, 'Invalid match query request.');
   assert.equal(detail.status, 400);

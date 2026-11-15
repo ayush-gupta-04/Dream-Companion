@@ -71,12 +71,9 @@ test('selects one analysis tool, executes it once, and normalizes the result', a
         assert.equal(tool.tool, 'OVER_ANALYSIS');
         return {
           tool: 'OVER_ANALYSIS',
-          answer: {
-            headline: 'Fast start',
-            analysis: 'Verified runs came from the over.',
-            factReferences: [{ deliveryId: 'delivery-1' }]
-          },
+          answer: 'Verified runs came from the over.',
           facts: { type: 'OVER_ANALYSIS' },
+          references: [{ deliveryId: 'delivery-1' }],
           limitations: []
         };
       }
@@ -95,7 +92,7 @@ test('selects one analysis tool, executes it once, and normalizes the result', a
 
   assert.equal(result.kind, 'ANALYSIS');
   assert.equal(result.tool, 'OVER_ANALYSIS');
-  assert.equal(result.answer.body, 'Verified runs came from the over.');
+  assert.equal(result.answer, 'Verified runs came from the over.');
   assert.deepEqual(result.references, [{ deliveryId: 'delivery-1' }]);
   assert.equal(recapCalled, false);
 });
@@ -157,23 +154,16 @@ test('differentiates between analyze last over (OVER_ANALYSIS) and summarize las
     analysisService: {
       execute: async ({ tool }) => ({
         tool: tool.tool,
-        answer: {
-          headline: 'Analysis Headline',
-          analysis: 'Analysis Body',
-          factReferences: [{ deliveryId: 'delivery-1' }]
-        },
+        answer: 'Analysis Body',
         facts: { type: 'OVER_ANALYSIS' },
+        references: [{ deliveryId: 'delivery-1' }],
         limitations: []
       })
     },
     recapService: {
       execute: async ({ tool }) => ({
         tool: tool.tool,
-        recap: {
-          headline: 'Recap Headline',
-          summary: 'Recap Summary',
-          bullets: ['Bullet 1']
-        },
+        recap: 'Recap Summary',
         evidence: { totals: { runs: 6 } },
         window: { type: 'LAST_OVER' },
         limitations: []
@@ -187,7 +177,7 @@ test('differentiates between analyze last over (OVER_ANALYSIS) and summarize las
   });
   assert.equal(analyzeResult.kind, 'ANALYSIS');
   assert.equal(analyzeResult.tool, 'OVER_ANALYSIS');
-  assert.equal(analyzeResult.answer.body, 'Analysis Body');
+  assert.equal(analyzeResult.answer, 'Analysis Body');
 
   const summarizeResult = await service.query({
     matchId: 'match-1',
@@ -195,8 +185,7 @@ test('differentiates between analyze last over (OVER_ANALYSIS) and summarize las
   });
   assert.equal(summarizeResult.kind, 'RECAP');
   assert.equal(summarizeResult.tool, 'LAST_OVER');
-  assert.equal(summarizeResult.answer.body, 'Recap Summary');
-  assert.deepEqual(summarizeResult.answer.bullets, ['Bullet 1']);
+  assert.equal(summarizeResult.answer, 'Recap Summary');
 });
 
 test('does not execute a deterministic tool for unsupported requests', async () => {

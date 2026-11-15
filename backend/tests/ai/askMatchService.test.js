@@ -48,7 +48,7 @@ test('uses only allow-listed deterministic facts before analysis narration', asy
   narrate = async ({ query, facts: receivedFacts }) => {
     assert.equal(query, 'Analyse the first over');
     assert.equal(receivedFacts, facts);
-    return { headline: 'Fast start', analysis: 'The verified over produced four runs.' };
+    return 'The verified over produced four runs.';
   };
   tools = {
     analyzeOver: async () => facts,
@@ -64,7 +64,8 @@ test('uses only allow-listed deterministic facts before analysis narration', asy
   });
 
   assert.equal(result.tool, 'OVER_ANALYSIS');
-  assert.deepEqual(result.answer.factReferences, facts.references);
+  assert.equal(result.answer, 'The verified over produced four runs.');
+  assert.deepEqual(result.references, facts.references);
   assert.equal(result.facts, facts);
 });
 
@@ -73,7 +74,7 @@ test('analyzes the last over when innings and over numbers are omitted', async (
   narrate = async ({ query, facts: receivedFacts }) => {
     assert.equal(query, 'Analyse the last over');
     assert.equal(receivedFacts, facts);
-    return { headline: 'Tidy finish', analysis: 'The last completed over was quiet.' };
+    return 'The last completed over was quiet.';
   };
   tools = {
     analyzeOver: async (request) => {
@@ -97,7 +98,7 @@ test('analyzes the last over when innings and over numbers are omitted', async (
     inningsNumber: null,
     overNumber: null
   });
-  assert.equal(result.answer.headline, 'Tidy finish');
+  assert.equal(result.answer, 'The last completed over was quiet.');
 });
 
 test('compares overs deterministically before narration', async () => {
@@ -107,7 +108,7 @@ test('compares overs deterministically before narration', async () => {
   };
   narrate = async ({ facts: receivedFacts }) => {
     assert.equal(receivedFacts, comparisonFacts);
-    return { headline: 'Changed tempo', analysis: 'The verified figures differ.' };
+    return 'The verified figures differ.';
   };
   tools = {
     analyzeOver: async () => assert.fail('Unexpected tool call'),
@@ -136,6 +137,7 @@ test('compares overs deterministically before narration', async () => {
   });
 
   assert.equal(result.tool, 'OVER_COMPARISON');
+  assert.equal(result.answer, 'The verified figures differ.');
   assert.equal(result.facts, comparisonFacts);
 });
 
@@ -147,7 +149,7 @@ test('searches factual events deterministically before narration', async () => {
   };
   narrate = async ({ facts: receivedFacts }) => {
     assert.equal(receivedFacts, eventFacts);
-    return { headline: 'Key wickets', analysis: 'The verified wickets are listed.' };
+    return 'The verified wickets are listed.';
   };
   tools = {
     analyzeOver: async () => assert.fail('Unexpected tool call'),
@@ -182,5 +184,6 @@ test('searches factual events deterministically before narration', async () => {
 
   assert.equal(result.tool, 'EVENT_SEARCH');
   assert.equal(result.limitations.length, 1);
-  assert.deepEqual(result.answer.factReferences, eventFacts.references);
+  assert.equal(result.answer, 'The verified wickets are listed.');
+  assert.deepEqual(result.references, eventFacts.references);
 });

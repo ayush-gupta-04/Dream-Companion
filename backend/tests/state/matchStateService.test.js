@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, mock, test } from 'node:test';
+import { createReplayMatch } from '../fixtures/replayMatch.js';
 
 let activePrisma;
 const prisma = { match: { findUnique: (...args) => activePrisma.match.findUnique(...args) } };
@@ -8,6 +9,89 @@ const { buildMatchState } =
   await import('../../src/modules/match-intelligence/state/matchStateService.js');
 
 describe('buildMatchState', () => {
+  test('preserves the public scorecard, player names, extras, and innings separation', async () => {
+    const match = createReplayMatch();
+    activePrisma = { match: { findUnique: async () => match } };
+
+    const { updatedAt, ...state } = await buildMatchState(match.id);
+    const innings = [
+      {
+        id: 'innings-1', inningsNumber: 1, battingTeam: 'North XI', targetRuns: null,
+        state: {
+          totalRuns: 29, wickets: 1, legalDeliveries: 7, overs: '1.1', ballsPerOver: 6,
+          extras: { wides: 2, noBalls: 1, byes: 2, legByes: 1, penaltyRuns: 5 },
+          batters: {
+            Zara: { runs: 7, ballsFaced: 2, fours: 0, sixes: 1, strikeRate: 350 },
+            Amir: { runs: 6, ballsFaced: 5, fours: 1, sixes: 0, strikeRate: 120 },
+            Casey: { runs: 0, ballsFaced: 1, fours: 0, sixes: 0, strikeRate: 0 }
+          },
+          bowlers: {
+            Dev: { legalDeliveries: 7, overs: '1.1', runsConceded: 16,
+              wickets: 1, economy: 13.71 }
+          }
+        }
+      },
+      {
+        id: 'innings-2', inningsNumber: 2, battingTeam: 'South XI', targetRuns: 35,
+        state: {
+          totalRuns: 5, wickets: 1, legalDeliveries: 2, overs: '0.2', ballsPerOver: 6,
+          extras: { wides: 0, noBalls: 0, byes: 0, legByes: 0, penaltyRuns: 0 },
+          batters: { Dev: { runs: 5, ballsFaced: 2, fours: 1, sixes: 0, strikeRate: 250 } },
+          bowlers: {
+            Amir: { legalDeliveries: 2, overs: '0.2', runsConceded: 5, wickets: 0, economy: 15 }
+          }
+        }
+      }
+    ];
+    assert.deepEqual(state, {
+      matchId: match.id, name: match.name, status: 'LIVE', ballsPerOver: 6,
+      currentInnings: innings[1], innings
+    });
+    assert.equal(new Date(updatedAt).toISOString(), updatedAt);
+  });
+
+  test('keeps each delivery prefix score and the active innings correct', async () => {
+    const match = createReplayMatch();
+    const [first, second] = match.innings;
+    const firstDeliveries = first.deliveries;
+    const secondDeliveries = second.deliveries;
+    second.deliveries = [];
+    activePrisma = { match: { findUnique: async () => match } };
+
+    // Includes the pre-innings penalty; repeated ball labels still count separately.
+    const totals = [5, 11, 12, 16, 18, 21, 23, 24, 24, 29];
+    const legalBalls = [0, 1, 2, 3, 3, 3, 4, 5, 6, 7];
+    for (let count = 0; count <= firstDeliveries.length; count += 1) {
+      first.deliveries = firstDeliveries.slice(0, count);
+      const state = await buildMatchState(match.id);
+      assert.equal(state.currentInnings.inningsNumber, 1);
+      assert.equal(state.currentInnings.state.totalRuns, totals[count], `prefix ${count}`);
+      assert.equal(state.currentInnings.state.legalDeliveries, legalBalls[count], `prefix ${count}`);
+      assert.equal(state.currentInnings.state.wickets, count >= 8 ? 1 : 0);
+      assert.equal(state.innings[1].state.totalRuns, 0);
+    }
+
+    second.deliveries = secondDeliveries.slice(0, 1);
+    const state = await buildMatchState(match.id);
+    assert.equal(state.currentInnings.inningsNumber, 2);
+    assert.equal(state.currentInnings.state.totalRuns, 4);
+    assert.equal(state.innings[0].state.totalRuns, 29);
+  });
+
+  test('adds post-innings penalties only for a completed match and never credits them to players', async () => {
+    const match = createReplayMatch();
+    activePrisma = { match: { findUnique: async () => match } };
+    const live = await buildMatchState(match.id);
+    match.status = 'COMPLETE';
+    const complete = await buildMatchState(match.id);
+    const repeated = await buildMatchState(match.id);
+
+    assert.equal(complete.status, 'COMPLETE');
+    assert.deepEqual(complete.innings[0].state, { ...live.innings[0].state, totalRuns: 34 });
+    assert.deepEqual(complete.innings[1], live.innings[1]);
+    assert.deepEqual(repeated.innings, complete.innings);
+  });
+
   test('returns null when match does not exist', async () => {
     const mockPrisma = {
       match: {

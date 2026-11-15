@@ -350,17 +350,10 @@ describe('MVP End-to-End System Tests', () => {
       return toolSelection('OVER_ANALYSIS', { inningsNumber: 1, overNumber: 0 });
     },
     async narrateAnalysis({ query, facts }) {
-      return {
-        headline: 'Factual match narrative',
-        analysis: `Grounded answer for "${query}" using ${facts.type ?? 'match data'}.`
-      };
+      return `### Factual match narrative\n\nGrounded answer for "${query}" using ${facts.type ?? 'match data'}.`;
     },
     async narrateRecap({ evidence }) {
-      return {
-        headline: 'Quick recap',
-        summary: `The selected window had ${evidence.totals.runs} runs and ${evidence.totals.wickets} wickets.`,
-        bullets: ['Key boundary scored', 'Key dismissal recorded']
-      };
+      return `### Quick recap\n\nThe selected window had ${evidence.totals.runs} runs and ${evidence.totals.wickets} wickets.`;
     }
   };
   aiClient = mockQueryAi;
@@ -443,7 +436,7 @@ describe('MVP End-to-End System Tests', () => {
       assert.equal(res.body.kind, 'RECAP');
       assert.equal(res.body.tool, 'WHOLE_MATCH');
       assert.equal(res.body.window.type, 'WHOLE_MATCH');
-      assert.equal(res.body.answer.headline, 'Quick recap');
+      assert.ok(res.body.answer.includes('Quick recap'));
       assert.equal(res.body.evidence.totals.runs, 10);
       assert.equal(res.body.evidence.totals.wickets, 1);
       assert.equal(res.body.references.length, 3);
@@ -535,7 +528,7 @@ describe('MVP End-to-End System Tests', () => {
       assert.equal(res.body.evidence.runs, 4);
       assert.equal(res.body.evidence.wickets, 1);
       assert.equal(res.body.references.length, 2);
-      assert.equal(res.body.answer.headline, 'Factual match narrative');
+      assert.ok(res.body.answer.includes('Factual match narrative'));
     });
 
     test('answers player analysis queries with batting and bowling facts', async () => {

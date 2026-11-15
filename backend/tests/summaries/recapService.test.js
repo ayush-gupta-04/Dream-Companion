@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import { config } from '../../src/config/index.js';
-import { executeRecapTool } from '../../src/modules/summaries/recapToolExecutor.js';
+import { resolveRecapWindow } from '../../src/modules/summaries/recapWindowResolver.js';
 
 const prisma = {};
 let narrate;
@@ -10,12 +10,12 @@ mock.module('../../src/db/prisma.js', { exports: { prisma } });
 mock.module('../../src/modules/ai/geminiMatchQueryClient.js', {
   exports: { narrateRecap: (request) => narrate(request) }
 });
-mock.module('../../src/modules/summaries/recapToolExecutor.js', {
-  exports: { executeRecapTool: (request) => runTool(request) }
+mock.module('../../src/modules/summaries/recapWindowResolver.js', {
+  exports: { resolveRecapWindow: (request) => runTool(request) }
 });
 const { join, leave, executeRecap } = await import('../../src/modules/summaries/recapService.js');
 
-function useRecapDependencies({ prisma: database, narrate: narrator, executeTool = executeRecapTool }) {
+function useRecapDependencies({ prisma: database, narrate: narrator, executeTool = resolveRecapWindow }) {
   for (const key of Object.keys(prisma)) delete prisma[key];
   Object.assign(prisma, database);
   narrate = narrator;
@@ -79,15 +79,11 @@ test('builds deterministic recap evidence before concise narration', async () =>
         extras: { wides: 0, noBalls: 0, byes: 0, legByes: 0, penaltyRuns: 0 }
       });
       assert.equal(evidence.notableEvents.length, 2);
-      return {
-        headline: 'Fast scoring',
-        summary: 'Eleven came quickly.',
-        bullets: ['A four.', 'A six.']
-      };
+      return '### Fast scoring\n\nEleven came quickly.\n\n* A four.\n* A six.';
     },
     executeTool: (input) => {
       assert.deepEqual(input.tool, recapTool('WHOLE_MATCH'));
-      return executeRecapTool(input);
+      return resolveRecapWindow(input);
     }
   });
 
@@ -98,8 +94,8 @@ test('builds deterministic recap evidence before concise narration', async () =>
   });
 
   assert.equal(result.tool, 'WHOLE_MATCH');
-  assert.equal(result.recap.headline, 'Fast scoring');
-  assert.equal(result.recap.factReferences.length, 3);
+  assert.equal(result.recap, '### Fast scoring\n\nEleven came quickly.\n\n* A four.\n* A six.');
+  assert.equal(result.references.length, 3);
   assert.equal(result.evidence.totals.runs, 11);
 });
 

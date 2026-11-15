@@ -26,25 +26,40 @@ test('selects a bounded shared tool and produces concise recap narration', async
   const calls = [];
   globalThis.fetch = async (url, options) => {
     calls.push({ url, options });
-    const response =
-      calls.length === 1
-        ? toolSelection()
-        : {
-            headline: 'Recent pressure',
-            summary: 'The last two completed overs added 12 runs.',
-            bullets: ['One boundary changed the tempo.', 'No wicket fell.']
-          };
-    return {
-      ok: true,
-      json: async () => ({
+    if (calls.length === 1) {
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [{ functionCall: { name: 'LAST_N_OVERS', args: { overs: 2 } } }],
+                role: 'model'
+              },
+              finishReason: 'STOP'
+            }
+          ]
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    return new Response(
+      JSON.stringify({
         candidates: [
           {
-            content: { parts: [{ text: JSON.stringify(response) }], role: 'model' },
+            content: {
+              parts: [
+                {
+                  text: '### Recent pressure\n\nThe last two completed overs added 12 runs.\n\n* One boundary changed the tempo.\n* No wicket fell.'
+                }
+              ],
+              role: 'model'
+            },
             finishReason: 'STOP'
           }
         ]
-      })
-    };
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
   };
 
   try {
@@ -66,23 +81,27 @@ test('selects a bounded shared tool and produces concise recap narration', async
 
     assert.equal(tool.tool, 'LAST_N_OVERS');
     assert.equal(tool.overs, 2);
-    assert.equal(recap.headline, 'Recent pressure');
+    assert.ok(typeof recap === 'string');
+    assert.ok(recap.includes('Recent pressure'));
     assert.equal(calls.length, 2);
     assert.equal(
       calls[0].url,
       'https://generativelanguage.googleapis.com/v1beta/models/test-model:generateContent'
     );
-    assert.equal(calls[0].options.headers['x-goog-api-key'], 'test-key');
+    const apiKeyHeader = calls[0].options.headers?.get
+      ? calls[0].options.headers.get('x-goog-api-key')
+      : calls[0].options.headers['x-goog-api-key'];
+    assert.equal(apiKeyHeader, 'test-key');
 
     const selectionRequest = JSON.parse(calls[0].options.body);
-    assert.equal(selectionRequest.generationConfig.responseMimeType, 'application/json');
-    assert.equal(selectionRequest.generationConfig.responseSchema.type, 'OBJECT');
-    assert.ok(selectionRequest.systemInstruction.parts[0].text.includes('Select exactly one'));
+    assert.ok(Array.isArray(selectionRequest.tools[0].functionDeclarations));
+    assert.equal(selectionRequest.toolConfig.functionCallingConfig.mode, 'ANY');
+    assert.ok(selectionRequest.systemInstruction.parts[0].text.includes('router'));
 
     const narrationRequest = JSON.parse(calls[1].options.body);
     assert.ok(
-      narrationRequest.systemInstruction.parts[0].text.includes('four to six') ||
-        narrationRequest.systemInstruction.parts[0].text.includes('three to five')
+      narrationRequest.systemInstruction.parts[0].text.includes('summary') ||
+        narrationRequest.systemInstruction.parts[0].text.includes('recap')
     );
   } finally {
     globalThis.fetch = originalFetch;
