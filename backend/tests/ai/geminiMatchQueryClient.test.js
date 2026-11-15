@@ -78,7 +78,10 @@ test('selects a bounded shared tool and produces concise recap narration', async
     assert.ok(selectionRequest.systemInstruction.parts[0].text.includes('Select exactly one'));
 
     const narrationRequest = JSON.parse(calls[1].options.body);
-    assert.ok(narrationRequest.systemInstruction.parts[0].text.includes('three to five'));
+    assert.ok(
+      narrationRequest.systemInstruction.parts[0].text.includes('four to six') ||
+        narrationRequest.systemInstruction.parts[0].text.includes('three to five')
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

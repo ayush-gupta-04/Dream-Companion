@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, createAuthenticatedApiClient } from './api.js';
+import { ApiError, createAuthenticatedApiClient, resolveApiUrl } from './api.js';
 
 describe('createAuthenticatedApiClient', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it('gets a fresh token and sends it as a Bearer token for each request', async () => {
@@ -69,5 +70,49 @@ describe('createAuthenticatedApiClient', () => {
       })
     );
     expect(ApiError).toBeTypeOf('function');
+  });
+
+  it('prepends VITE_API_URL when configured and avoids duplicated /api prefix', async () => {
+    vi.stubEnv('VITE_API_URL', 'https://api.dreamcompanion.com/api/');
+    const getToken = vi.fn().mockResolvedValue('fresh-clerk-token');
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ matches: [] })
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = createAuthenticatedApiClient(getToken);
+    await client.request('/api/matches');
+
+    expect(fetchMock).toHaveBeenCalledWith('https://api.dreamcompanion.com/api/matches', {
+      headers: { Authorization: 'Bearer fresh-clerk-token' }
+    });
+  });
+});
+
+describe('resolveApiUrl', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('returns relative path when VITE_API_URL is unset', () => {
+    expect(resolveApiUrl('/api/matches')).toBe('/api/matches');
+  });
+
+  it('resolves against VITE_API_URL without trailing slash', () => {
+    vi.stubEnv('VITE_API_URL', 'https://backend.onrender.com');
+    expect(resolveApiUrl('/api/matches')).toBe('https://backend.onrender.com/api/matches');
+    expect(resolveApiUrl('api/matches')).toBe('https://backend.onrender.com/api/matches');
+  });
+
+  it('handles trailing slashes and avoids duplicate /api segments', () => {
+    vi.stubEnv('VITE_API_URL', 'https://backend.onrender.com/api/');
+    expect(resolveApiUrl('/api/matches')).toBe('https://backend.onrender.com/api/matches');
+  });
+
+  it('leaves full URLs untouched', () => {
+    vi.stubEnv('VITE_API_URL', 'https://backend.onrender.com');
+    expect(resolveApiUrl('https://other-service.com/webhook')).toBe('https://other-service.com/webhook');
   });
 });

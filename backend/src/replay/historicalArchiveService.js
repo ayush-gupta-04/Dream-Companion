@@ -68,14 +68,11 @@ async function persistHistoricalMatch({ prisma, stateCache, timelineService, ada
 }
 
 /**
- * Persists every historical file before the API starts. The configured live
- * file is bootstrapped as a card-ready match, but its delivery data is always
- * cleared so that it can be replayed on the first workspace visit.
+ * Bootstraps the single live replay match so that live simulations are ready immediately.
  */
-export async function bootstrapHistoricalArchive({
+export async function bootstrapLiveMatch({
   prisma,
   stateCache,
-  timelineService,
   dataDirectory,
   liveFileName
 }) {
@@ -85,61 +82,99 @@ export async function bootstrapHistoricalArchive({
   }
 
   const normalizedLiveFileName = path.basename(liveFileName);
-  if (normalizedLiveFileName !== liveFileName) {
-    throw new Error('LIVE_REPLAY_FILE must name a JSON file within CRICSHEET_DATA_DIR.');
-  }
-
-  const fileNames = (await readdir(archiveDirectory, { withFileTypes: true }))
-    .filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === '.json')
-    .map((entry) => entry.name)
-    .sort((left, right) => left.localeCompare(right));
-
-  if (fileNames.length === 0) {
-    throw new Error(`Cricsheet archive directory has no JSON match files: ${archiveDirectory}`);
-  }
-  if (!fileNames.includes(normalizedLiveFileName)) {
+  const liveFilePath = path.join(archiveDirectory, normalizedLiveFileName);
+  if (!existsSync(liveFilePath)) {
     throw new Error(
       `Configured live replay file was not found in the archive: ${normalizedLiveFileName}`
     );
   }
 
-  const result = {
+  const adaptedMatch = await loadAdaptedMatch(liveFilePath);
+  const preparedMatch = await bootstrapCricsheetMatch(prisma, adaptedMatch);
+  await clearMatchSimulationData({
+    prisma,
+    stateCache,
+    matchId: preparedMatch.match.id,
+    status: 'LIVE'
+  });
+
+  return {
     archiveDirectory,
-    liveFilePath: path.join(archiveDirectory, normalizedLiveFileName),
-    liveMatchId: null,
-    historicalMatchesSeeded: 0,
-    historicalMatchesSkipped: 0,
-    totalFiles: fileNames.length
+    liveFilePath,
+    liveMatchId: preparedMatch.match.id
   };
+}
 
-  for (const fileName of fileNames) {
-    const adaptedMatch = await loadAdaptedMatch(path.join(archiveDirectory, fileName));
+/**
+ * Seeds historical match archives in the background without blocking server startup.
+ */
+export async function seedHistoricalArchive({
+  prisma,
+  stateCache,
+  timelineService,
+  dataDirectory,
+  liveFileName,
+  limit = 10
+}) {
+  const archiveDirectory = resolveArchiveDirectory(dataDirectory);
+  if (!archiveDirectory) return;
 
-    if (fileName === normalizedLiveFileName) {
-      const preparedMatch = await bootstrapCricsheetMatch(prisma, adaptedMatch);
-      await clearMatchSimulationData({
-        prisma,
-        stateCache,
-        matchId: preparedMatch.match.id,
-        status: 'LIVE'
-      });
-      result.liveMatchId = preparedMatch.match.id;
-      continue;
-    }
+  const normalizedLiveFileName = path.basename(liveFileName);
+  const allFiles = (await readdir(archiveDirectory, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === '.json')
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right))
+    .filter((fileName) => fileName !== normalizedLiveFileName);
 
-    if (await historicalMatchIsCurrent(prisma, adaptedMatch)) {
-      result.historicalMatchesSkipped += 1;
-      continue;
-    }
+  const fileLimit = limit > 0 ? limit : allFiles.length;
+  const targetFiles = allFiles.slice(0, fileLimit);
 
+  console.log(`[Archive] Background seeding started for ${targetFiles.length} historical matches...`);
+
+  let seeded = 0;
+  let skipped = 0;
+
+  for (let i = 0; i < targetFiles.length; i++) {
+    const fileName = targetFiles[i];
     try {
+      const adaptedMatch = await loadAdaptedMatch(path.join(archiveDirectory, fileName));
+      if (await historicalMatchIsCurrent(prisma, adaptedMatch)) {
+        skipped++;
+        continue;
+      }
+
+      console.log(`[Archive] Seeding match (${i + 1}/${targetFiles.length}): ${fileName}...`);
       await persistHistoricalMatch({ prisma, stateCache, timelineService, adaptedMatch });
-      result.historicalMatchesSeeded += 1;
+      seeded++;
     } catch (error) {
-      error.message = `Could not persist Cricsheet source ${fileName}: ${error.message}`;
-      throw error;
+      console.error(`[Archive] Could not persist Cricsheet source ${fileName}: ${error.message}`);
     }
   }
 
-  return result;
+  console.log(`[Archive] Background seeding complete: ${seeded} seeded, ${skipped} unchanged.`);
+}
+
+/**
+ * Persists live match first and provides legacy signature support.
+ */
+export async function bootstrapHistoricalArchive({
+  prisma,
+  stateCache,
+  timelineService,
+  dataDirectory,
+  liveFileName
+}) {
+  const liveResult = await bootstrapLiveMatch({
+    prisma,
+    stateCache,
+    dataDirectory,
+    liveFileName
+  });
+
+  return {
+    ...liveResult,
+    historicalMatchesSeeded: 0,
+    historicalMatchesSkipped: 0,
+    totalFiles: 1
+  };
 }

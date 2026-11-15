@@ -50,7 +50,10 @@ export const config = {
     liveFileName: path.basename(
       process.env.LIVE_REPLAY_FILE || process.env.REPLAY_FILE || '1001349.json'
     ),
-    deliveryIntervalMs: parseInt(process.env.REPLAY_INTERVAL_MS || '1000', 10)
+    deliveryIntervalMs: parseInt(process.env.REPLAY_INTERVAL_MS || '1000', 10),
+    seedLimit: process.env.CRICSHEET_SEED_LIMIT
+      ? parseInt(process.env.CRICSHEET_SEED_LIMIT, 10)
+      : 10
   },
   gemini: {
     apiKey: process.env.GEMINI_API_KEY || '',

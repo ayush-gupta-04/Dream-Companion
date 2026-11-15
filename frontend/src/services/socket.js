@@ -1,7 +1,20 @@
 import { io } from 'socket.io-client';
 
 function defaultSocketUrl() {
-  return import.meta.env.VITE_SOCKET_URL?.trim() || window.location.origin;
+  const socketUrl = import.meta.env.VITE_SOCKET_URL?.trim();
+  if (socketUrl) return socketUrl;
+
+  const apiUrl = import.meta.env.VITE_API_URL?.trim();
+  if (apiUrl) {
+    try {
+      const parsed = new URL(apiUrl);
+      return parsed.origin;
+    } catch {
+      return apiUrl.replace(/\/api\/?$/, '');
+    }
+  }
+
+  return window.location.origin;
 }
 
 /**

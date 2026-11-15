@@ -16,6 +16,26 @@ function messageFromResponse(body, status) {
   return `API request failed with status: ${status}`;
 }
 
+export function resolveApiUrl(path) {
+  if (typeof path !== 'string' || /^https?:\/\//i.test(path)) {
+    return path;
+  }
+
+  const base = import.meta.env.VITE_API_URL?.trim();
+  if (!base) {
+    return path;
+  }
+
+  const trimmedBase = base.replace(/\/+$/, '');
+  const trimmedPath = path.startsWith('/') ? path : `/${path}`;
+
+  if (trimmedBase.endsWith('/api') && trimmedPath.startsWith('/api/')) {
+    return `${trimmedBase}${trimmedPath.slice(4)}`;
+  }
+
+  return `${trimmedBase}${trimmedPath}`;
+}
+
 /**
  * Builds the only client used for protected API calls. The token is acquired
  * at request time so Clerk can refresh an expiring session before a request.
@@ -30,7 +50,8 @@ export function createAuthenticatedApiClient(getToken) {
 
       let response;
       try {
-        response = await fetch(path, {
+        const url = resolveApiUrl(path);
+        response = await fetch(url, {
           ...options,
           headers: {
             ...options.headers,
