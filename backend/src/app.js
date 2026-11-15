@@ -41,12 +41,13 @@ export function createApp({
   const activeAuth = auth ?? createClerkAuth({ clerk: config.clerk, nodeEnv: config.nodeEnv });
 
   app.use(activeAuth.initialize);
-  app.use(
-    cors({
-      origin: config.frontendUrl,
-      credentials: true
-    })
-  );
+//   app.use(
+//     cors({
+//       origin: config.frontendUrl,
+//       credentials: true
+//     })
+//   );
+    app.use(cors()); // Allows all origins
   app.use(express.json());
   app.use('/match-card-images', express.static(matchCardImageDirectory, { maxAge: '1h' }));
 
