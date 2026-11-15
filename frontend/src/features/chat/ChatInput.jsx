@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ArrowUp } from 'lucide-react';
 
 export function ChatInput({ onSubmit, disabled = false, isSubmitting = false }) {
   const [input, setInput] = useState('');
@@ -48,7 +49,7 @@ export function ChatInput({ onSubmit, disabled = false, isSubmitting = false }) 
           {isSubmitting ? (
             <span className="spinner-mini" aria-hidden="true" />
           ) : (
-            <span aria-hidden="true">↑</span>
+            <ArrowUp className="w-4 h-4" aria-hidden="true" />
           )}
         </button>
       </div>

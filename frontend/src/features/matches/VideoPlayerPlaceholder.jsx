@@ -1,3 +1,5 @@
+import { VideoOff, ShieldCheck } from 'lucide-react';
+
 export function VideoPlayerPlaceholder({ matchName, status = 'SCHEDULED' }) {
   const isLive = status === 'LIVE';
 
@@ -10,7 +12,10 @@ export function VideoPlayerPlaceholder({ matchName, status = 'SCHEDULED' }) {
         <div className="video-placeholder-overlay">
           <div className="video-placeholder-topline">
             <span className="video-badge">
-              <span className={`status-dot ${isLive ? 'status-dot--live' : ''}`} aria-hidden="true" />
+              <span
+                className={`status-dot ${isLive ? 'status-dot--live' : ''}`}
+                aria-hidden="true"
+              />
               <span>{isLive ? 'Live Simulation' : 'Match Simulation'}</span>
             </span>
             {matchName && <span className="video-match-title">{matchName}</span>}
@@ -18,19 +23,7 @@ export function VideoPlayerPlaceholder({ matchName, status = 'SCHEDULED' }) {
 
           <div className="video-placeholder-center">
             <div className="video-icon-wrapper" aria-hidden="true">
-              <svg
-                width="36"
-                height="36"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <polygon points="5 3 19 12 5 21 5 3" />
-                <line x1="2" y1="2" x2="22" y2="22" strokeWidth="2" />
-              </svg>
+              <VideoOff className="w-8 h-8 text-slate-400" />
             </div>
             <p className="video-placeholder-heading">Video Companion Shell</p>
             <p className="video-placeholder-caption">
@@ -40,7 +33,8 @@ export function VideoPlayerPlaceholder({ matchName, status = 'SCHEDULED' }) {
           </div>
 
           <div className="video-placeholder-footer">
-            <span className="video-footer-pill">
+            <span className="video-footer-pill inline-flex items-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
               Factual ball-by-ball intelligence is verified below
             </span>
           </div>

@@ -632,25 +632,35 @@
   color: #7b9484;
 }
 
-/* --- Compact Factual Match State Card --- */
+/* --- Compact Factual Match State Card (Uiverse Professional Aesthetics) --- */
 .match-state-card {
   position: relative;
-  border: 1px solid #dce6de;
-  border-radius: 1rem;
-  background: #ffffff;
-  padding: clamp(1.15rem, 2.5vw, 1.45rem);
-  box-shadow: 0 2px 10px rgba(10, 40, 25, 0.04);
+  border: 1px solid rgba(16, 185, 129, 0.22);
+  border-radius: 1.25rem;
+  background: radial-gradient(130% 130% at 50% 0%, #ffffff 0%, #f4f8f5 100%);
+  padding: clamp(1.25rem, 2.8vw, 1.65rem);
+  box-shadow:
+    0 4px 6px -1px rgba(10, 40, 25, 0.04),
+    0 14px 28px -4px rgba(10, 40, 25, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
   overflow: hidden;
-  transition:
-    box-shadow 200ms ease,
-    border-color 200ms ease;
+  transition: all 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.match-state-card:hover {
+  border-color: rgba(16, 185, 129, 0.38);
+  box-shadow:
+    0 6px 12px -2px rgba(10, 40, 25, 0.06),
+    0 20px 36px -4px rgba(10, 40, 25, 0.11),
+    inset 0 1px 0 rgba(255, 255, 255, 1);
 }
 
 .match-state-card--live {
-  border-color: #0a6248;
+  border-color: rgba(16, 185, 129, 0.45);
   box-shadow:
-    0 0 0 1px rgb(10 98 72 / 14%),
-    0 6px 20px rgb(10 98 72 / 10%);
+    0 0 0 1px rgba(16, 185, 129, 0.22),
+    0 12px 32px -4px rgba(5, 150, 105, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
 }
 
 .match-state-card--live::before {
@@ -659,13 +669,27 @@
   top: 0;
   left: 0;
   right: 0;
-  height: 3.5px;
-  background: linear-gradient(90deg, #10b981, #059669, #34d399);
+  height: 4px;
+  background: linear-gradient(90deg, #10b981, #059669, #34d399, #10b981);
+  background-size: 200% 100%;
+  animation: uiverse-shimmer 3s ease infinite;
   z-index: 2;
 }
 
+@keyframes uiverse-shimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
 .match-state-card--collapsed {
-  padding-bottom: 1.15rem;
+  padding-bottom: 1.25rem;
 }
 
 .match-state-card--empty {
@@ -675,9 +699,9 @@
 }
 
 .state-header {
-  border-bottom: 1px solid #edf3ef;
-  padding-bottom: 0.85rem;
-  margin-bottom: 0.95rem;
+  border-bottom: 1px solid #e7f0e9;
+  padding-bottom: 0.95rem;
+  margin-bottom: 1.05rem;
 }
 
 .state-header-top {
@@ -691,14 +715,14 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.55rem;
+  gap: 0.65rem;
 }
 
 .state-team-badge {
-  color: #112d20;
-  font-size: 1.18rem;
-  font-weight: 800;
-  letter-spacing: -0.025em;
+  color: #0b2b1c;
+  font-size: 1.25rem;
+  font-weight: 850;
+  letter-spacing: -0.03em;
   line-height: 1.2;
 }
 
@@ -706,12 +730,14 @@
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  background: #eef6f0;
-  color: #0a6248;
+  background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+  border: 1px solid #a7f3d0;
+  color: #047857;
   font-size: 0.72rem;
-  font-weight: 750;
-  letter-spacing: 0.01em;
-  padding: 0.18rem 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  padding: 0.22rem 0.7rem;
+  box-shadow: 0 1px 3px rgba(5, 150, 105, 0.08);
 }
 
 .state-header-badges {
@@ -722,115 +748,154 @@
 }
 
 .state-target-banner {
-  margin-top: 0.55rem;
+  margin-top: 0.65rem;
 }
 
 .state-target-pill {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  background: #fdf5ee;
-  border: 1px solid #f9dec9;
-  color: #9c4c15;
+  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+  border: 1px solid #fde68a;
+  color: #92400e;
   font-size: 0.75rem;
-  font-weight: 750;
-  padding: 0.18rem 0.65rem;
+  font-weight: 800;
+  padding: 0.22rem 0.75rem;
+  box-shadow: 0 1px 3px rgba(217, 119, 6, 0.1);
 }
 
+/* Score Hero with Uiverse High-Tech Broadcast HUD */
 .score-hero {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 0.65rem;
+  gap: 1.25rem;
+  padding: 1.15rem 1.45rem;
+  margin-bottom: 0.95rem;
+  border-radius: 1rem;
+  background: linear-gradient(135deg, #09261a 0%, #0d3826 50%, #061c13 100%);
+  border: 1px solid rgba(16, 185, 129, 0.32);
+  box-shadow:
+    0 8px 24px -4px rgba(4, 30, 20, 0.42),
+    inset 0 1px 1px rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  position: relative;
+  overflow: hidden;
+}
+
+.score-hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 88% 22%, rgba(16, 185, 129, 0.22), transparent 55%);
+  pointer-events: none;
 }
 
 .score-numbers {
   display: flex;
   align-items: baseline;
-  gap: 0.15rem;
+  gap: 0.2rem;
   font-variant-numeric: tabular-nums;
   line-height: 1;
+  z-index: 1;
 }
 
 .score-runs {
-  color: #12291f;
-  font-size: clamp(2.25rem, 4.5vw, 3.1rem);
-  font-weight: 850;
+  color: #ffffff;
+  font-size: clamp(2.45rem, 5vw, 3.35rem);
+  font-weight: 900;
   letter-spacing: -0.04em;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
 }
 
 .score-divider {
-  color: #8da495;
-  font-size: clamp(1.75rem, 3.5vw, 2.3rem);
-  font-weight: 350;
-  margin-inline: 0.05rem;
+  color: #4ade80;
+  font-size: clamp(1.85rem, 3.8vw, 2.5rem);
+  font-weight: 300;
+  opacity: 0.85;
+  margin-inline: 0.12rem;
 }
 
 .score-wickets {
-  color: #059669;
-  font-size: clamp(2.25rem, 4.5vw, 3.1rem);
-  font-weight: 850;
+  color: #86efac;
+  font-size: clamp(2.45rem, 5vw, 3.35rem);
+  font-weight: 900;
   letter-spacing: -0.04em;
+  text-shadow: 0 0 16px rgba(74, 222, 128, 0.45);
 }
 
 .score-meta {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 0.15rem;
+  gap: 0.25rem;
   font-variant-numeric: tabular-nums;
+  z-index: 1;
 }
 
 .score-overs {
-  font-size: 1.3rem;
-  font-weight: 800;
-  color: #354f42;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 1.35rem;
+  font-weight: 850;
+  color: #ffffff;
   letter-spacing: -0.02em;
   line-height: 1.1;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.32rem 0.72rem;
+  border-radius: 0.55rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(8px);
 }
 
 .score-balls-per-over {
-  font-size: 0.76rem;
-  color: #788d80;
+  font-size: 0.72rem;
+  color: #94a3b8;
+  letter-spacing: 0.02em;
 }
 
+/* Uiverse-Inspired Interactive Collapse Button */
 .state-collapse-trigger {
   display: flex;
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 0.52rem 0.85rem;
-  margin-top: 0.35rem;
-  margin-bottom: 0.85rem;
-  border: 1px solid #e2ebe4;
-  border-radius: 0.6rem;
-  background: #f7faf8;
-  color: #244434;
-  font-size: 0.8rem;
+  padding: 0.65rem 1.05rem;
+  margin-top: 0.45rem;
+  margin-bottom: 0.95rem;
+  border: 1px solid #cfe2d4;
+  border-radius: 0.75rem;
+  background: linear-gradient(180deg, #fbfdfc 0%, #eff7f2 100%);
+  color: #0f3d2a;
+  font-size: 0.82rem;
   font-weight: 750;
   letter-spacing: -0.01em;
   cursor: pointer;
-  transition:
-    background-color 160ms ease,
-    border-color 160ms ease,
-    color 160ms ease;
+  box-shadow: 0 1px 3px rgba(10, 40, 25, 0.04);
+  transition: all 180ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .state-collapse-trigger:hover {
-  background: #eef5f0;
-  border-color: #bcd4c4;
-  color: #0a6248;
+  background: linear-gradient(180deg, #ffffff 0%, #e6f3eb 100%);
+  border-color: #059669;
+  color: #047857;
+  box-shadow: 0 4px 12px rgba(5, 150, 105, 0.14);
+  transform: translateY(-1px);
+}
+
+.state-collapse-trigger:active {
+  transform: scale(0.99);
 }
 
 .state-collapse-trigger:focus-visible {
-  outline: 2px solid #0a6248;
+  outline: 2px solid #059669;
   outline-offset: 2px;
 }
 
 .state-collapse-chevron {
-  color: #0a6248;
-  transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  color: #059669;
+  transition: transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .state-collapse-chevron--open {
@@ -838,13 +903,13 @@
 }
 
 .state-detailed-content {
-  animation: state-content-reveal 200ms ease-out;
+  animation: state-content-reveal 220ms ease-out;
 }
 
 @keyframes state-content-reveal {
   from {
     opacity: 0;
-    transform: translateY(-4px);
+    transform: translateY(-6px);
   }
   to {
     opacity: 1;
@@ -852,80 +917,96 @@
   }
 }
 
+/* Uiverse Extras Breakdown Chip Strip */
 .extras-breakdown {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.45rem;
-  font-size: 0.78rem;
-  color: #4b6154;
-  background: #f6faf7;
-  border: 1px solid #e6f0e8;
-  border-radius: 0.5rem;
-  padding: 0.45rem 0.75rem;
-  margin-bottom: 1.15rem;
+  gap: 0.65rem;
+  font-size: 0.8rem;
+  color: #334d3f;
+  background: #f0f7f3;
+  border: 1px solid #d8ebd9;
+  border-radius: 0.65rem;
+  padding: 0.6rem 0.95rem;
+  margin-bottom: 1.25rem;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.02);
   font-variant-numeric: tabular-nums;
 }
 
 .extras-total {
-  font-weight: 750;
-  color: #17382a;
+  font-weight: 800;
+  color: #092e1e;
+  background: #d8f0e0;
+  padding: 0.18rem 0.55rem;
+  border-radius: 0.4rem;
+  border: 1px solid #b8e2c4;
 }
 
 .extras-detail {
-  color: #697d71;
+  color: #4b6b57;
+  font-weight: 550;
 }
 
 .state-stats-section {
-  margin-bottom: 1.25rem;
+  margin-bottom: 1.35rem;
 }
 
 .stats-section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 0.45rem;
+  margin-bottom: 0.5rem;
 }
 
 .stats-section-title {
   margin: 0;
   font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  font-weight: 850;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: #536c5d;
+  color: #3f5e4b;
 }
 
+/* Uiverse Data Tables */
 .table-responsive {
   width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  border-radius: 0.75rem;
+  border: 1px solid #e1ece4;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(10, 40, 25, 0.02);
+  margin-top: 0.35rem;
 }
 
 .stats-table {
   width: 100%;
-  border-collapse: collapse;
-  font-size: 0.8rem;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.82rem;
 }
 
 .stats-table th {
-  padding: 0.35rem 0.5rem;
-  border-bottom: 1px solid #dce6de;
+  padding: 0.55rem 0.75rem;
+  background: #f7faf8;
+  border-bottom: 1px solid #e1ece4;
   font-size: 0.68rem;
-  font-weight: 750;
-  letter-spacing: 0.06em;
+  font-weight: 800;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #6d8073;
+  color: #4e6b5a;
 }
 
 .stats-table td {
-  padding: 0.48rem 0.5rem;
-  border-bottom: 1px solid #f1f5f2;
-  color: #1c3327;
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid #edf4ef;
+  color: #1a3627;
+  transition: background-color 140ms ease;
 }
 
 .stats-table tr:hover td {
-  background: #fbfdfb;
+  background: #f0fdf4;
 }
 
 .stats-table tbody tr:last-child td {
@@ -941,7 +1022,8 @@
 }
 
 .stats-player-name {
-  font-weight: 650;
+  font-weight: 700;
+  color: #0c2b1d;
   max-width: 9rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -966,35 +1048,40 @@
 }
 
 .state-empty-innings {
-  padding: 2rem 0;
+  padding: 2.5rem 0;
   text-align: center;
   color: #627568;
   font-size: 0.9rem;
 }
 
+/* Card Footer */
 .state-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  border-top: 1px solid #edf3ef;
-  padding-top: 0.85rem;
-  margin-top: 0.85rem;
-  font-size: 0.73rem;
-  color: #72867b;
+  border-top: 1px solid #edf4ef;
+  padding-top: 0.95rem;
+  margin-top: 1rem;
+  font-size: 0.75rem;
+  color: #647d6f;
 }
 
 .state-grounding-tag {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  font-weight: 700;
-  color: #0a6248;
-  font-size: 0.73rem;
+  font-weight: 750;
+  color: #059669;
+  font-size: 0.74rem;
+  background: #ecfdf5;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid #d1fae5;
 }
 
 .state-grounding-icon {
-  color: #0a6248;
+  color: #059669;
 }
 
 /* --- Workspace Skeletons --- */
@@ -1497,7 +1584,13 @@
 }
 
 .chatbot-launcher-dc-text {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family:
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
   font-size: 1.35rem;
   font-weight: 900;
   font-style: italic;
@@ -1563,7 +1656,13 @@
     radial-gradient(ellipse at 88% 0%, rgba(16, 185, 129, 0.16) 0%, transparent 58%),
     radial-gradient(ellipse at 12% 100%, rgba(5, 150, 105, 0.12) 0%, transparent 52%),
     radial-gradient(circle at 50% 45%, rgba(20, 184, 166, 0.06) 0%, transparent 45%),
-    repeating-linear-gradient(135deg, rgba(16, 185, 129, 0.02) 0px, rgba(16, 185, 129, 0.02) 2px, transparent 2px, transparent 14px),
+    repeating-linear-gradient(
+      135deg,
+      rgba(16, 185, 129, 0.02) 0px,
+      rgba(16, 185, 129, 0.02) 2px,
+      transparent 2px,
+      transparent 14px
+    ),
     linear-gradient(168deg, #f2f9f5 0%, #e6f3eb 50%, #edf7f0 100%);
   padding: clamp(1.25rem, 2.5vw, 1.65rem);
   box-shadow:

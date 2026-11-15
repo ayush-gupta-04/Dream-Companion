@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ChevronDown, ShieldCheck, Target, Trophy, Activity } from 'lucide-react';
 
 function formatOrdinal(number) {
   if (number === 1) return '1st';
@@ -22,7 +23,10 @@ export function MatchStateCard({ state, defaultExpanded = true }) {
 
   if (!state) {
     return (
-      <article className="match-state-card match-state-card--empty" aria-label="Match state unavailable">
+      <article
+        className="match-state-card match-state-card--empty"
+        aria-label="Match state unavailable"
+      >
         <p className="state-empty-label">Match state is currently unavailable.</p>
       </article>
     );
@@ -53,11 +57,13 @@ export function MatchStateCard({ state, defaultExpanded = true }) {
       <header className="state-header">
         <div className="state-header-top">
           <div className="state-team-group">
-            <span className="state-team-badge">
+            <span className="state-team-badge inline-flex items-center gap-2">
+              <Trophy className="w-4 h-4 text-emerald-600 shrink-0" aria-hidden="true" />
               {currentInnings ? `${currentInnings.battingTeam}` : name}
             </span>
             {currentInnings && (
               <span className="state-innings-pill">
+                <Activity className="w-3 h-3 text-emerald-600 mr-1 shrink-0" aria-hidden="true" />
                 {formatOrdinal(currentInnings.inningsNumber)} Innings
               </span>
             )}
@@ -72,7 +78,13 @@ export function MatchStateCard({ state, defaultExpanded = true }) {
 
         {currentInnings && currentInnings.targetRuns != null && (
           <div className="state-target-banner">
-            <span className="state-target-pill">Target: {currentInnings.targetRuns}</span>
+            <span className="state-target-pill">
+              <Target
+                className="w-3.5 h-3.5 text-amber-600 inline mr-1 shrink-0"
+                aria-hidden="true"
+              />
+              Target: {currentInnings.targetRuns}
+            </span>
           </div>
         )}
       </header>
@@ -101,23 +113,19 @@ export function MatchStateCard({ state, defaultExpanded = true }) {
             aria-expanded={isExpanded}
             aria-controls="state-detailed-content"
           >
-            <span className="state-collapse-label">
+            <span className="state-collapse-label inline-flex items-center gap-2">
+              <span
+                className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-sm"
+                aria-hidden="true"
+              />
               {isExpanded ? 'Collapse scorecard' : 'Expand scorecard'}
             </span>
-            <svg
-              className={`state-collapse-chevron ${isExpanded ? 'state-collapse-chevron--open' : ''}`}
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+            <ChevronDown
+              className={`state-collapse-chevron w-4 h-4 transition-transform duration-200 ${
+                isExpanded ? 'rotate-180 state-collapse-chevron--open' : ''
+              }`}
               aria-hidden="true"
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
+            />
           </button>
 
           {isExpanded && (
@@ -140,24 +148,40 @@ export function MatchStateCard({ state, defaultExpanded = true }) {
                     <table className="stats-table">
                       <thead>
                         <tr>
-                          <th scope="col" className="table-cell-left">Batter</th>
-                          <th scope="col" className="table-cell-right">R</th>
-                          <th scope="col" className="table-cell-right">B</th>
-                          <th scope="col" className="table-cell-right">4s</th>
-                          <th scope="col" className="table-cell-right">6s</th>
-                          <th scope="col" className="table-cell-right">SR</th>
+                          <th scope="col" className="table-cell-left">
+                            Batter
+                          </th>
+                          <th scope="col" className="table-cell-right">
+                            R
+                          </th>
+                          <th scope="col" className="table-cell-right">
+                            B
+                          </th>
+                          <th scope="col" className="table-cell-right">
+                            4s
+                          </th>
+                          <th scope="col" className="table-cell-right">
+                            6s
+                          </th>
+                          <th scope="col" className="table-cell-right">
+                            SR
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
                         {battersList.map(([id, stats]) => (
                           <tr key={id}>
                             <td className="table-cell-left stats-player-name">{id}</td>
-                            <td className="table-cell-right font-tabular font-bold">{stats.runs}</td>
+                            <td className="table-cell-right font-tabular font-bold">
+                              {stats.runs}
+                            </td>
                             <td className="table-cell-right font-tabular">{stats.ballsFaced}</td>
                             <td className="table-cell-right font-tabular">{stats.fours}</td>
                             <td className="table-cell-right font-tabular">{stats.sixes}</td>
                             <td className="table-cell-right font-tabular">
-                              {typeof stats.strikeRate === 'number' ? stats.strikeRate.toFixed(1) : '—'}
+                              {typeof stats.strikeRate === 'number'
+                                ? stats.strikeRate.toFixed(1)
+                                : '—'}
                             </td>
                           </tr>
                         ))}
@@ -178,11 +202,21 @@ export function MatchStateCard({ state, defaultExpanded = true }) {
                     <table className="stats-table">
                       <thead>
                         <tr>
-                          <th scope="col" className="table-cell-left">Bowler</th>
-                          <th scope="col" className="table-cell-right">O</th>
-                          <th scope="col" className="table-cell-right">R</th>
-                          <th scope="col" className="table-cell-right">W</th>
-                          <th scope="col" className="table-cell-right">ECON</th>
+                          <th scope="col" className="table-cell-left">
+                            Bowler
+                          </th>
+                          <th scope="col" className="table-cell-right">
+                            O
+                          </th>
+                          <th scope="col" className="table-cell-right">
+                            R
+                          </th>
+                          <th scope="col" className="table-cell-right">
+                            W
+                          </th>
+                          <th scope="col" className="table-cell-right">
+                            ECON
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
@@ -191,7 +225,9 @@ export function MatchStateCard({ state, defaultExpanded = true }) {
                             <td className="table-cell-left stats-player-name">{id}</td>
                             <td className="table-cell-right font-tabular">{stats.overs}</td>
                             <td className="table-cell-right font-tabular">{stats.runsConceded}</td>
-                            <td className="table-cell-right font-tabular font-bold">{stats.wickets}</td>
+                            <td className="table-cell-right font-tabular font-bold">
+                              {stats.wickets}
+                            </td>
                             <td className="table-cell-right font-tabular">
                               {typeof stats.economy === 'number' ? stats.economy.toFixed(2) : '—'}
                             </td>
@@ -214,24 +250,9 @@ export function MatchStateCard({ state, defaultExpanded = true }) {
       )}
 
       <footer className="state-footer">
-        <span className="state-freshness">
-          Last verified at {formatFreshness(updatedAt)}
-        </span>
-        <span className="state-grounding-tag">
-          <svg
-            className="state-grounding-icon"
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <polyline points="20 6 9 17 4 12" />
-          </svg>
+        <span className="state-freshness">Last verified at {formatFreshness(updatedAt)}</span>
+        <span className="state-grounding-tag inline-flex items-center gap-1.5">
+          <ShieldCheck className="state-grounding-icon w-3.5 h-3.5" aria-hidden="true" />
           Deterministic match facts
         </span>
       </footer>

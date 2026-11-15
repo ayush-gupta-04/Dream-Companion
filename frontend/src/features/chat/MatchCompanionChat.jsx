@@ -1,15 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
+import { X, Sparkles, MessageSquare } from 'lucide-react';
 import { ChatInput } from './ChatInput.jsx';
 import { ChatMessage } from './ChatMessage.jsx';
 import { ChatPromptButtons } from './ChatPromptButtons.jsx';
 import { useMatchChat } from './useMatchChat.js';
 
-export function MatchCompanionChat({
-  apiClient,
-  matchId,
-  sessionId,
-  defaultOpen = false
-}) {
+export function MatchCompanionChat({ apiClient, matchId, sessionId, defaultOpen = false }) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const { messages, isSubmitting, submitQuery, clearChat } = useMatchChat(
     apiClient,
@@ -69,20 +65,7 @@ export function MatchCompanionChat({
                 aria-label="Collapse Dream Companion"
                 title="Collapse chat"
               >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
+                <X className="w-4 h-4 text-slate-400 hover:text-white" aria-hidden="true" />
               </button>
             </div>
           </header>
@@ -123,19 +106,7 @@ export function MatchCompanionChat({
       >
         {isOpen ? (
           <span className="chatbot-launcher-close-icon" aria-hidden="true">
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
+            <X className="w-5 h-5 text-white" />
           </span>
         ) : (
           <>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { RefreshCw, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-react';
 import { MatchCard } from './MatchCard.jsx';
 import {
   MatchDirectoryEmpty,
@@ -42,12 +43,16 @@ export function MatchDirectory({ apiClient, onNavigate }) {
         </div>
         {directory && (
           <button
-            className="button button-secondary directory-refresh"
+            className="button button-secondary directory-refresh inline-flex items-center gap-2"
             type="button"
             onClick={refresh}
             disabled={isRefreshing}
           >
-            {isRefreshing ? 'Refreshing…' : 'Refresh matches'}
+            <RefreshCw
+              className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`}
+              aria-hidden="true"
+            />
+            <span>{isRefreshing ? 'Refreshing…' : 'Refresh matches'}</span>
           </button>
         )}
       </div>
@@ -87,23 +92,25 @@ export function MatchDirectory({ apiClient, onNavigate }) {
               {totalPages > 1 && (
                 <nav className="directory-pagination" aria-label="Match pages">
                   <button
-                    className="button button-secondary"
+                    className="button button-secondary inline-flex items-center gap-1.5"
                     type="button"
                     onClick={() => setPage((previousPage) => previousPage - 1)}
                     disabled={currentPage === 1}
                   >
-                    Previous matches
+                    <ChevronLeft className="w-4 h-4" aria-hidden="true" />
+                    <span>Previous matches</span>
                   </button>
                   <span className="directory-page-status" aria-current="page">
                     Page {currentPage} of {totalPages}
                   </span>
                   <button
-                    className="button button-secondary"
+                    className="button button-secondary inline-flex items-center gap-1.5"
                     type="button"
                     onClick={() => setPage((previousPage) => previousPage + 1)}
                     disabled={currentPage === totalPages}
                   >
-                    Next matches
+                    <span>Next matches</span>
+                    <ChevronRight className="w-4 h-4" aria-hidden="true" />
                   </button>
                 </nav>
               )}

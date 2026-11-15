@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { createMatchSocket } from '../../services/socket.js';
 import { MatchCompanionChat } from '../chat/MatchCompanionChat.jsx';
 import { SmartMatchTimeline } from '../timeline/SmartMatchTimeline.jsx';
@@ -74,8 +75,12 @@ export function MatchWorkspace({
       aria-labelledby="workspace-title"
     >
       <nav className="workspace-nav" aria-label="Workspace navigation">
-        <a className="back-link" href="/matches" onClick={handleBack}>
-          <span aria-hidden="true">←</span> All matches
+        <a
+          className="back-link inline-flex items-center gap-2"
+          href="/matches"
+          onClick={handleBack}
+        >
+          <ArrowLeft className="w-4 h-4" aria-hidden="true" /> All matches
         </a>
       </nav>
 
@@ -94,12 +99,16 @@ export function MatchWorkspace({
             <div className="workspace-header-actions">
               <button
                 type="button"
-                className="button button-secondary workspace-refresh-button"
+                className="button button-secondary workspace-refresh-button inline-flex items-center gap-1.5"
                 onClick={refresh}
                 disabled={isRefreshing}
                 aria-label="Refresh match state"
               >
-                {isRefreshing ? 'Refreshing…' : 'Refresh'}
+                <RefreshCw
+                  className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`}
+                  aria-hidden="true"
+                />
+                <span>{isRefreshing ? 'Refreshing…' : 'Refresh'}</span>
               </button>
             </div>
           </header>

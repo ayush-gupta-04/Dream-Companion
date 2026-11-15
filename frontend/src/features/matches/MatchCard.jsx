@@ -1,3 +1,5 @@
+import { Clock } from 'lucide-react';
+
 const statusLabels = {
   LIVE: 'Live',
   SCHEDULED: 'Scheduled',
@@ -35,7 +37,7 @@ export function MatchCard({ match, onNavigate }) {
   return (
     <li className="match-card-item">
       <a
-        className={`match-card ${match.imageUrl ? 'match-card--with-image' : ''} ${
+        className={`match-card group ${match.imageUrl ? 'match-card--with-image' : ''} ${
           isLiveSimulation ? 'match-card--live' : ''
         }`}
         data-status={match.status}
@@ -44,7 +46,12 @@ export function MatchCard({ match, onNavigate }) {
       >
         <div className="match-card-media">
           {match.imageUrl ? (
-            <img className="match-card-image" src={match.imageUrl} alt="" loading="lazy" />
+            <img
+              className="match-card-image transition-transform duration-300 group-hover:scale-105"
+              src={match.imageUrl}
+              alt=""
+              loading="lazy"
+            />
           ) : (
             <div className="match-card-media-fallback" aria-hidden="true" />
           )}
@@ -64,21 +71,7 @@ export function MatchCard({ match, onNavigate }) {
         <div className="match-card-details">
           <div className="match-card-copy">
             <div className="match-card-meta">
-              <svg
-                className="match-card-clock-icon"
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <circle cx="12" cy="12" r="10" />
-                <polyline points="12 6 12 12 16 14" />
-              </svg>
+              <Clock className="match-card-clock-icon w-3.5 h-3.5" aria-hidden="true" />
               <time dateTime={match.freshness.updatedAt}>
                 {formatUpdatedAt(match.freshness.updatedAt)}
               </time>
@@ -89,7 +82,12 @@ export function MatchCard({ match, onNavigate }) {
           <div className="match-card-footer">
             <span className="match-card-action">
               <span>Open match</span>
-              <span className="match-card-action-arrow" aria-hidden="true">→</span>
+              <span
+                className="match-card-action-arrow transition-transform duration-200 group-hover:translate-x-1"
+                aria-hidden="true"
+              >
+                →
+              </span>
             </span>
           </div>
         </div>
