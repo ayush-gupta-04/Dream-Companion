@@ -2,12 +2,19 @@ name: Backend health check
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '2-57/15 * * * *'
   workflow_dispatch:
 
 jobs:
   health-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 2
+
     steps:
       - name: Check backend
-        run: curl --fail --show-error --silent --max-time 30 "https://dream-companion-srb6.onrender.com/health"
+        run: |
+          curl --fail --show-error --silent \
+            --max-time 90 \
+            "https://dream-companion-srb6.onrender.com/health"
+
+          echo "Backend health check completed!"
